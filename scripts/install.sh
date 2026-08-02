@@ -23,7 +23,7 @@ command -v curl >/dev/null || { echo 'curl is required.' >&2; exit 1; }
 
 # shellcheck disable=SC1091
 source /etc/os-release
-OS_ID=${ID,,}; OS_VERSION=${VERSION_ID:-unknown}; OS_CODENAME=${VERSION_CODENAME:-${UBUNTU_CODENAME:-}}
+OS_ID=${ID,,}; OS_VERSION=${VERSION_ID:-unknown}
 case "$OS_ID:$OS_VERSION" in
   ubuntu:18.04|ubuntu:20.04|ubuntu:22.04|ubuntu:24.04|ubuntu:26.04|debian:10|debian:11|debian:12|debian:13|centos:7*|rocky:8*|rocky:9*|rocky:10*|almalinux:8*|almalinux:9*|almalinux:10*) ;;
   *) echo "Unsupported distribution: $OS_ID $OS_VERSION" >&2; exit 1 ;;
@@ -74,7 +74,10 @@ esac
 ASSET="anpanel-linux-$ARCH"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 download_release_asset() {
-  local name=$1 destination=$2 url="$RELEASE_BASE/download/$TARGET_VERSION/$name"
+  local name destination url
+  name=${1:?release asset name is required}
+  destination=${2:?release asset destination is required}
+  url="$RELEASE_BASE/download/$TARGET_VERSION/$name"
   printf '[AnPanel] Downloading %s from %s\n' "$name" "$url"
   # -q disables ~/.curlrc so host-specific curl settings cannot corrupt URLs.
   curl -qfL --show-error --retry 3 --connect-timeout 10 --max-time 300 \

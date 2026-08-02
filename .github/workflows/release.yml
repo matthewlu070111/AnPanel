@@ -95,7 +95,7 @@ jobs:
           npm run build --prefix web
           go vet ./...
           go test ./...
-          bash -n scripts/install.sh scripts/lib/sources.sh scripts/build-installer.sh
+          bash -n scripts/install.sh scripts/lib/sources.sh scripts/build-installer.sh scripts/test-installer.sh
 
       - name: Build amd64 and arm64 assets
         env:
@@ -111,6 +111,8 @@ jobs:
           (cd dist && sha256sum anpanel-linux-amd64 > anpanel-linux-amd64.sha256)
           (cd dist && sha256sum anpanel-linux-arm64 > anpanel-linux-arm64.sha256)
           make installer VERSION="$VERSION"
+          bash scripts/test-installer.sh dist/install.sh
+          shellcheck -S warning dist/install.sh scripts/build-installer.sh scripts/test-installer.sh
 
       - name: Create checksum manifest
         run: |
