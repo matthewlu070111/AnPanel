@@ -30,8 +30,14 @@
 | `GET /docker/containers` | 本机全部容器 |
 | `GET /docker/inventory/{images,networks,volumes}` | Docker 对象清单 |
 | `GET /ws/docker/terminal` | 受限容器终端 WebSocket |
-| `GET /websites` | Nginx/Apache 虚拟主机及未识别原始配置块 |
+| `GET /websites` | 站点列表（同域 HTTP/HTTPS 合并为一行，不含配置原文） |
+| `GET /websites/config?path=` | 读取站点配置文件原文 |
+| `GET /rewrite-rules` | 伪静态模板列表（ThinkPHP / Laravel / WordPress 等） |
 | `GET /certificates` | 证书列表（Let’s Encrypt / AnPanel / acme.sh），含到期天数 |
+| `GET /files?path=` | 文件管理：列出允许根目录下的条目 |
+| `GET /files/content?path=` | 读取文本文件内容（≤2MB） |
+| `GET /crontab` | root 用户 crontab 列表 |
+| `GET /system` | 版本、更新通道、Web 服务与远端 release 信息 |
 | `POST /actions` | 创建异步系统任务 |
 | `GET /tasks` | 查询任务及脱敏结果 |
 | `GET /audits` | 查询操作审计记录 |
@@ -73,11 +79,18 @@ agent 当前允许的动作如下。除此之外的 `kind` 会被拒绝。
 | `service.start/stop/restart` | 白名单 systemd 服务名 | 限 Nginx、Apache、Docker 和 AnPanel 服务 |
 | `web.apply` | 受管配置文件路径 | 内容放在 `options.content`，应用前验证并支持回滚 |
 | `web.reload` | `nginx` 或 `apache` | 验证配置后 reload |
-| `web.site.create` | 域名 | `options`: `domain`、`server`、`site_type`(`static`\|`proxy`)、`root`、`proxy_pass`、`enable_ssl`、`tool`、`email` |
-| `web.site.delete` | 域名 | 仅删除 `anpanel-site-*` 托管配置；`options.server` |
-| `cert.issue` | 域名 | 为已有站点申请证书；`options.server/tool/email` |
+| `web.site.create` | 域名 | `options`: `domain`、`site_type`(`static`\|`proxy`)、`root`、`proxy_pass`、`enable_ssl`、`tool`、`email`；`server` 可选（默认自动选择已安装的唯一/首选 Web 服务） |
+| `web.site.delete` | 域名 | 仅删除 `anpanel-site-*` 托管配置 |
+| `cert.issue` | 域名 | 为已有站点申请证书；`options.tool/email` |
 | `cert.renew` | 域名（空=全部 certbot） | 续期；`options.tool`、`options.force` |
-| `package.install` | `nginx`、`apache`、`docker` 或 `certbot` | 受兼容目录和仓库状态限制 |
+| `files.write/mkdir/delete/rename` | 路径 | 限允许根目录；`write` 用 `options.content`，`rename` 用 `options.to` |
+| `crontab.add` | - | `options.schedule` + `options.command` |
+| `crontab.remove` | 任务 id | 删除对应 crontab 行 |
+| `docker.deploy` | 镜像 | 拉取并运行容器，可选 `domain` 创建反代站点；`host_port`/`container_port`/`env`/`enable_ssl` |
+| `panel.self_update` | `stable` 或 `prerelease` | 下载官方 install.sh 并升级，保留配置 |
+| `package.install` | 软件名 | `options.method`=`source`\|`package`\|`script`；PHP 可带 `version`（8.1–8.4）。互斥：nginx↔apache、certbot↔acme.sh；compose 不可单独安装 |
+| `package.update` | 软件名 | 更新/重装；默认编译类走 source |
+| `web.site.rewrite` | 域名 | `options.rewrite` 伪静态模板 id（none/spa/wordpress/thinkphp/laravel/yii） |
 | `notification.configure` | 配置标识 | JSON 放在 `options.json`，凭据文件权限为 `0600` |
 | `panel.bind_domain` | 面板入口 | 使用 `options.domain/server/tool/email` |
 | `panel.unbind_domain` | 面板入口 | 撤销域名入口并恢复直接访问 |

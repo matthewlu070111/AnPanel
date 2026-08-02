@@ -35,6 +35,9 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	agent.Version = buildVersion
+	app.Version = buildVersion
+
 	switch os.Args[1] {
 	case "web":
 		err = app.Run(ctx, cfg, logger)

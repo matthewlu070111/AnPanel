@@ -26,6 +26,9 @@ import (
 	"github.com/matthewlu070111/anpanel/internal/webui"
 )
 
+// Version is injected from main at process start.
+var Version = "dev"
+
 type server struct {
 	cfg         config.Config
 	db          *store.Store
@@ -83,7 +86,13 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/docker/containers", s.withSession(s.proxyGet("/v1/docker/containers"), false))
 	mux.HandleFunc("/api/v1/docker/inventory/", s.withSession(s.proxyInventory, false))
 	mux.HandleFunc("/api/v1/websites", s.withSession(s.proxyGet("/v1/websites"), false))
+	mux.HandleFunc("/api/v1/websites/config", s.withSession(s.proxyQuery("/v1/websites/config"), false))
+	mux.HandleFunc("/api/v1/rewrite-rules", s.withSession(s.proxyGet("/v1/rewrite-rules"), false))
 	mux.HandleFunc("/api/v1/certificates", s.withSession(s.proxyGet("/v1/certificates"), false))
+	mux.HandleFunc("/api/v1/files", s.withSession(s.proxyQuery("/v1/files"), false))
+	mux.HandleFunc("/api/v1/files/content", s.withSession(s.proxyQuery("/v1/files/content"), false))
+	mux.HandleFunc("/api/v1/crontab", s.withSession(s.proxyGet("/v1/crontab"), false))
+	mux.HandleFunc("/api/v1/system", s.withSession(s.systemInfo, false))
 	mux.HandleFunc("/api/v1/tasks", s.withSession(s.tasks, false))
 	mux.HandleFunc("/api/v1/audits", s.withSession(s.audits, false))
 	mux.HandleFunc("/api/v1/alerts/rules", s.withSession(s.alertRules, false))
@@ -275,6 +284,32 @@ func (s *server) proxyGet(path string) http.HandlerFunc {
 		}
 		apiJSON(w, out)
 	}
+}
+
+// proxyQuery forwards GET with the original query string to the agent.
+func (s *server) proxyQuery(path string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		full := path
+		if q := r.URL.RawQuery; q != "" {
+			full = path + "?" + q
+		}
+		var out any
+		if err := s.agent.Get(r.Context(), full, &out); err != nil {
+			apiError(w, 503, err.Error())
+			return
+		}
+		apiJSON(w, out)
+	}
+}
+
+func (s *server) systemInfo(w http.ResponseWriter, r *http.Request) {
+	var out any
+	if err := s.agent.Get(r.Context(), "/v1/system", &out); err != nil {
+		// Fall back to local version if agent is briefly unavailable.
+		apiJSON(w, map[string]any{"version": Version, "channel": s.cfg.UpdateChannel})
+		return
+	}
+	apiJSON(w, out)
 }
 func (s *server) proxyInventory(w http.ResponseWriter, r *http.Request) {
 	kind := strings.TrimPrefix(r.URL.Path, "/api/v1/docker/inventory/")

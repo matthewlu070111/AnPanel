@@ -18,12 +18,30 @@ type HostSnapshot struct {
 }
 
 type DetectedService struct {
-	Name       string `json:"name"`
-	Version    string `json:"version"`
-	Path       string `json:"path"`
-	Status     string `json:"status"`
-	ConfigPath string `json:"config_path"`
-	Installed  bool   `json:"installed"`
+	Name            string   `json:"name"`
+	DisplayName     string   `json:"display_name,omitempty"`
+	Version         string   `json:"version"`
+	Path            string   `json:"path"`
+	Status          string   `json:"status"`
+	ConfigPath      string   `json:"config_path"`
+	Installed       bool     `json:"installed"`
+	Group           string   `json:"group,omitempty"`            // web | ssl | runtime | container
+	Conflicts       []string `json:"conflicts,omitempty"`       // mutually exclusive components
+	InstallMethods  []string `json:"install_methods,omitempty"` // source | package | script
+	DefaultMethod   string   `json:"default_method,omitempty"`
+	Versions        []string `json:"versions,omitempty"` // e.g. PHP
+	CanInstall      bool     `json:"can_install"`
+	CanUpdate       bool     `json:"can_update"`
+	BlockReason     string   `json:"block_reason,omitempty"`
+	Note            string   `json:"note,omitempty"`
+}
+
+type RewriteRule struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Nginx       string `json:"nginx"`
+	Apache      string `json:"apache"`
 }
 
 type Container struct {
@@ -43,10 +61,31 @@ type WebSite struct {
 	Domains     []string `json:"domains"`
 	Listen      []string `json:"listen"`
 	ProxyTarget string   `json:"proxy_target"`
+	DocRoot     string   `json:"doc_root,omitempty"`
 	TLS         bool     `json:"tls"`
+	HasHTTP     bool     `json:"has_http"`
+	HasHTTPS    bool     `json:"has_https"`
 	Enabled     bool     `json:"enabled"`
 	SourcePath  string   `json:"source_path"`
-	Raw         string   `json:"raw"`
+	// Raw is only filled for config detail requests, not site lists.
+	Raw string `json:"raw,omitempty"`
+}
+
+type FileEntry struct {
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	IsDir   bool   `json:"is_dir"`
+	Size    int64  `json:"size"`
+	Mode    string `json:"mode"`
+	ModTime string `json:"mod_time"`
+}
+
+type CronJob struct {
+	ID       string `json:"id"`
+	Schedule string `json:"schedule"`
+	Command  string `json:"command"`
+	Raw      string `json:"raw"`
+	Enabled  bool   `json:"enabled"`
 }
 
 type Certificate struct {

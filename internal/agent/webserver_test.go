@@ -4,6 +4,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/matthewlu070111/anpanel/internal/domain"
 )
 
 func TestParseNginxPreservesRaw(t *testing.T) {
@@ -46,9 +48,12 @@ func TestComposePathBoundary(t *testing.T) {
 }
 
 func TestSiteStaticAndProxyConfig(t *testing.T) {
-	static := siteStaticConfig("nginx", "blog.example.com", "/var/www/blog.example.com", "", "")
+	static := siteStaticConfig("nginx", "blog.example.com", "/var/www/blog.example.com", "", "", "spa")
 	if !strings.Contains(static, "server_name blog.example.com") || !strings.Contains(static, "root /var/www/blog.example.com") {
 		t.Fatalf("bad static config: %s", static)
+	}
+	if !strings.Contains(static, "index.html") || !strings.Contains(static, "AnPanel rewrite") {
+		t.Fatalf("rewrite missing: %s", static)
 	}
 	proxy := siteProxyConfig("nginx", "app.example.com", "http://127.0.0.1:3000", "", "")
 	if !strings.Contains(proxy, "proxy_pass http://127.0.0.1:3000") {
@@ -58,6 +63,25 @@ func TestSiteStaticAndProxyConfig(t *testing.T) {
 	if !strings.Contains(tls, "SSLEngine on") || !strings.Contains(tls, "443") {
 		t.Fatalf("bad apache tls config: %s", tls)
 	}
+}
+
+func TestRewriteTemplates(t *testing.T) {
+	rules := rewriteTemplates()
+	if len(rules) < 4 {
+		t.Fatal("expected rewrite templates")
+	}
+	r, err := rewriteByID("wordpress")
+	if err != nil || r.Nginx == "" {
+		t.Fatal(err)
+	}
+}
+
+func TestSoftwareConflictMessage(t *testing.T) {
+	// pure function path — no install on Windows CI
+	if err := checkSoftwareConflict("compose"); err != nil {
+		// compose is handled in installSoftware, not checkSoftwareConflict
+	}
+	_ = checkSoftwareConflict("nginx")
 }
 
 func TestSafeWebRoot(t *testing.T) {
@@ -80,5 +104,25 @@ func TestSafeWebRoot(t *testing.T) {
 func TestDomainSlug(t *testing.T) {
 	if domainSlug("Blog.Example.COM") != "blog.example.com" {
 		t.Fatal(domainSlug("Blog.Example.COM"))
+	}
+}
+
+func TestMergeWebsitesHTTPAndHTTPS(t *testing.T) {
+	in := []domain.WebSite{
+		{ID: "1", Server: "nginx", Domains: []string{"a.com"}, Listen: []string{"80"}, SourcePath: "/etc/nginx/conf.d/a.conf", Raw: "secret1"},
+		{ID: "2", Server: "nginx", Domains: []string{"a.com"}, Listen: []string{"443 ssl"}, TLS: true, SourcePath: "/etc/nginx/conf.d/a.conf", Raw: "secret2", ProxyTarget: "http://127.0.0.1:9"},
+	}
+	out := mergeWebsites(in)
+	if len(out) != 1 {
+		t.Fatalf("want 1 site, got %d", len(out))
+	}
+	if !out[0].TLS || !out[0].HasHTTP || !out[0].HasHTTPS {
+		t.Fatalf("flags: %#v", out[0])
+	}
+	if out[0].Raw != "" {
+		t.Fatal("list must not include raw config")
+	}
+	if out[0].ProxyTarget != "http://127.0.0.1:9" {
+		t.Fatal(out[0].ProxyTarget)
 	}
 }

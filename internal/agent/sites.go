@@ -8,10 +8,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/matthewlu070111/anpanel/internal/system"
 )
 
 var (
-	nginxRoot  = regexp.MustCompile(`(?m)(?:^|[;{])\s*root\s+([^;]+);`)
 	proxyURLRe = regexp.MustCompile(`(?i)^https?://[a-z0-9._:\[\]/@%-]+$`)
 	safeSlug   = regexp.MustCompile(`[^a-z0-9._-]+`)
 )
@@ -23,7 +24,11 @@ func createWebsite(ctx context.Context, opts map[string]string) (ActionResult, e
 	}
 	server := strings.ToLower(strings.TrimSpace(opts["server"]))
 	if server == "" {
-		server = "nginx"
+		var err error
+		server, err = preferredWebServer()
+		if err != nil {
+			return ActionResult{}, err
+		}
 	}
 	if server != "nginx" && server != "apache" {
 		return ActionResult{}, errors.New("web server must be nginx or apache")
@@ -34,6 +39,13 @@ func createWebsite(ctx context.Context, opts map[string]string) (ActionResult, e
 	}
 	if siteType != "static" && siteType != "proxy" {
 		return ActionResult{}, errors.New("site_type must be static or proxy")
+	}
+	rewrite := strings.TrimSpace(opts["rewrite"])
+	if rewrite == "" {
+		rewrite = "none"
+	}
+	if _, err := rewriteByID(rewrite); err != nil {
+		return ActionResult{}, err
 	}
 
 	path, err := siteConfigPath(server, domain)
@@ -59,7 +71,7 @@ func createWebsite(ctx context.Context, opts map[string]string) (ActionResult, e
 			_ = os.WriteFile(index, []byte(fmt.Sprintf("<!doctype html><html><head><meta charset=utf-8><title>%s</title></head><body><h1>%s</h1><p>Created by AnPanel</p></body></html>\n", domain, domain)), 0644)
 		}
 		_ = os.MkdirAll("/var/lib/anpanel/acme", 0755)
-		content = siteStaticConfig(server, domain, root, "", "")
+		content = siteStaticConfig(server, domain, root, "", "", rewrite)
 	case "proxy":
 		target := strings.TrimSpace(opts["proxy_pass"])
 		if target == "" {
@@ -105,7 +117,11 @@ func deleteWebsite(ctx context.Context, domain, server string) (ActionResult, er
 		return ActionResult{}, errors.New("invalid domain name")
 	}
 	if server == "" {
-		server = "nginx"
+		var err error
+		server, err = preferredWebServer()
+		if err != nil {
+			return ActionResult{}, err
+		}
 	}
 	path, err := siteConfigPath(server, domain)
 	if err != nil {
@@ -198,7 +214,24 @@ func safeWebRoot(raw, domain string) (string, error) {
 	return abs, nil
 }
 
-func siteStaticConfig(server, domain, root, cert, key string) string {
+func siteStaticConfig(server, domain, root, cert, key, rewriteID string) string {
+	if rewriteID == "" {
+		rewriteID = "none"
+	}
+	ngxLoc := "# BEGIN AnPanel rewrite\n" + nginxLocationBlock(rewriteID) + "# END AnPanel rewrite\n"
+	apRw := "# BEGIN AnPanel rewrite\n" + apacheRewriteBlock(rewriteID) + "# END AnPanel rewrite\n"
+	// PHP-FPM snippet when php is present
+	phpNginx := ""
+	phpApache := ""
+	if system.IsInstalled("php") {
+		phpNginx = `  location ~ \.php$ {
+    include fastcgi_params;
+    fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    fastcgi_pass 127.0.0.1:9000;
+  }
+`
+		phpApache = "  # PHP handled via php-fpm / proxy when configured\n"
+	}
 	if server == "nginx" {
 		if cert == "" {
 			return fmt.Sprintf(`# Managed by AnPanel
@@ -206,13 +239,10 @@ server {
   listen 80;
   server_name %s;
   root %s;
-  index index.html index.htm;
+  index index.php index.html index.htm;
   location /.well-known/acme-challenge/ { root /var/lib/anpanel/acme; }
-  location / {
-    try_files $uri $uri/ =404;
-  }
-}
-`, domain, root)
+%s%s}
+`, domain, root, ngxLoc, phpNginx)
 		}
 		return fmt.Sprintf(`# Managed by AnPanel
 server {
@@ -227,12 +257,9 @@ server {
   ssl_certificate %s;
   ssl_certificate_key %s;
   root %s;
-  index index.html index.htm;
-  location / {
-    try_files $uri $uri/ =404;
-  }
-}
-`, domain, domain, cert, key, root)
+  index index.php index.html index.htm;
+%s%s}
+`, domain, domain, cert, key, root, ngxLoc, phpNginx)
 	}
 	// apache
 	if cert == "" {
@@ -244,9 +271,9 @@ server {
   <Directory %s>
     AllowOverride All
     Require all granted
-  </Directory>
+%s%s  </Directory>
 </VirtualHost>
-`, domain, root, root)
+`, domain, root, root, apRw, phpApache)
 	}
 	return fmt.Sprintf(`# Managed by AnPanel
 <VirtualHost *:80>
@@ -263,9 +290,9 @@ server {
   <Directory %s>
     AllowOverride All
     Require all granted
-  </Directory>
+%s%s  </Directory>
 </VirtualHost>
-`, domain, domain, domain, cert, key, root, root)
+`, domain, domain, domain, cert, key, root, root, apRw, phpApache)
 }
 
 func siteProxyConfig(server, domain, target, cert, key string) string {

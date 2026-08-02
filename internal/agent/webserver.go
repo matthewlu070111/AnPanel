@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,8 +20,11 @@ var (
 	nginxNames  = regexp.MustCompile(`(?m)(?:^|[;{])\s*server_name\s+([^;]+);`)
 	nginxListen = regexp.MustCompile(`(?m)(?:^|[;{])\s*listen\s+([^;]+);`)
 	nginxProxy  = regexp.MustCompile(`(?m)(?:^|[;{])\s*proxy_pass\s+([^;]+);`)
+	nginxRoot   = regexp.MustCompile(`(?m)(?:^|[;{])\s*root\s+([^;]+);`)
 	apacheVHost = regexp.MustCompile(`(?s)<VirtualHost\s+([^>]+)>(.*?)</VirtualHost>`)
 	apacheName  = regexp.MustCompile(`(?mi)^\s*Server(?:Name|Alias)\s+(.+)$`)
+	apacheRoot  = regexp.MustCompile(`(?mi)^\s*DocumentRoot\s+(\S+)`)
+	apacheProxy = regexp.MustCompile(`(?mi)^\s*ProxyPass\s+/\s+(\S+)`)
 )
 
 func discoverWebsites() ([]domain.WebSite, error) {
@@ -34,7 +38,7 @@ func discoverWebsites() ([]domain.WebSite, error) {
 				if err != nil || d.IsDir() {
 					return nil
 				}
-				if strings.HasSuffix(path, "~") || strings.Contains(path, ".bak.") {
+				if strings.HasSuffix(path, "~") || strings.Contains(path, ".bak.") || strings.Contains(path, ".anpanel.") {
 					return nil
 				}
 				b, e := os.ReadFile(path)
@@ -50,8 +54,95 @@ func discoverWebsites() ([]domain.WebSite, error) {
 			})
 		}
 	}
-	return out, nil
+	return mergeWebsites(out), nil
 }
+
+// mergeWebsites collapses HTTP + HTTPS blocks for the same domain into one row (BT-style).
+func mergeWebsites(in []domain.WebSite) []domain.WebSite {
+	type key struct{ server, domain string }
+	order := []key{}
+	by := map[key]*domain.WebSite{}
+	for _, s := range in {
+		primary := ""
+		if len(s.Domains) > 0 {
+			primary = strings.ToLower(s.Domains[0])
+		} else {
+			primary = s.Name
+		}
+		k := key{server: s.Server, domain: primary}
+		if cur, ok := by[k]; ok {
+			cur.Listen = uniqueStrings(append(cur.Listen, s.Listen...))
+			cur.Domains = uniqueStrings(append(cur.Domains, s.Domains...))
+			if s.TLS {
+				cur.TLS = true
+				cur.HasHTTPS = true
+			} else {
+				cur.HasHTTP = true
+			}
+			if cur.ProxyTarget == "" {
+				cur.ProxyTarget = s.ProxyTarget
+			}
+			if cur.DocRoot == "" {
+				cur.DocRoot = s.DocRoot
+			}
+			// Prefer managed anpanel-site path when merging multi-file setups.
+			if strings.Contains(s.SourcePath, "anpanel-site-") {
+				cur.SourcePath = s.SourcePath
+			}
+			continue
+		}
+		cp := s
+		cp.Raw = "" // never expose full config in list
+		if cp.TLS {
+			cp.HasHTTPS = true
+		} else {
+			cp.HasHTTP = true
+		}
+		// Same file may have both blocks later; also detect from listen.
+		for _, l := range cp.Listen {
+			ll := strings.ToLower(l)
+			if strings.Contains(ll, "443") || strings.Contains(ll, "ssl") {
+				cp.HasHTTPS = true
+				cp.TLS = true
+			}
+			if strings.Contains(ll, "80") || (!strings.Contains(ll, "443") && !strings.Contains(ll, "ssl")) {
+				cp.HasHTTP = true
+			}
+		}
+		by[k] = &cp
+		order = append(order, k)
+	}
+	out := make([]domain.WebSite, 0, len(order))
+	for _, k := range order {
+		out = append(out, *by[k])
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := "", ""
+		if len(out[i].Domains) > 0 {
+			a = out[i].Domains[0]
+		}
+		if len(out[j].Domains) > 0 {
+			b = out[j].Domains[0]
+		}
+		return a < b
+	})
+	return out
+}
+
+func uniqueStrings(in []string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, v := range in {
+		v = strings.TrimSpace(v)
+		if v == "" || seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	return out
+}
+
 func parseNginx(path, raw string) []domain.WebSite {
 	blocks := nginxBlocks(raw)
 	out := []domain.WebSite{}
@@ -65,6 +156,9 @@ func parseNginx(path, raw string) []domain.WebSite {
 		}
 		if m := nginxProxy.FindStringSubmatch(block); len(m) > 1 {
 			v.ProxyTarget = strings.TrimSpace(m[1])
+		}
+		if m := nginxRoot.FindStringSubmatch(block); len(m) > 1 {
+			v.DocRoot = strings.TrimSpace(m[1])
 		}
 		out = append(out, v)
 	}
@@ -120,6 +214,7 @@ func nginxBlocks(raw string) []string {
 	}
 	return out
 }
+
 func parseApache(path, raw string) []domain.WebSite {
 	blocks := apacheVHost.FindAllStringSubmatch(raw, -1)
 	out := []domain.WebSite{}
@@ -129,10 +224,42 @@ func parseApache(path, raw string) []domain.WebSite {
 		for _, m := range apacheName.FindAllStringSubmatch(b[2], -1) {
 			v.Domains = append(v.Domains, strings.Fields(m[1])...)
 		}
+		if m := apacheRoot.FindStringSubmatch(b[2]); len(m) > 1 {
+			v.DocRoot = strings.TrimSpace(m[1])
+		}
+		if m := apacheProxy.FindStringSubmatch(b[2]); len(m) > 1 {
+			v.ProxyTarget = strings.TrimSpace(m[1])
+		}
 		out = append(out, v)
 	}
 	return out
 }
+
+func websiteConfig(path string) (string, error) {
+	p, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	if !isManagedWebPath(p) {
+		return "", errors.New("path is outside managed web config roots")
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+func isManagedWebPath(p string) bool {
+	for _, root := range []string{"/etc/nginx", "/etc/apache2", "/etc/httpd"} {
+		rel, e := filepath.Rel(root, p)
+		if e == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
+			return true
+		}
+	}
+	return false
+}
+
 func applyWebConfig(ctx context.Context, path, content string) (ActionResult, error) {
 	p, err := filepath.Abs(path)
 	if err != nil {
@@ -194,6 +321,7 @@ func applyWebConfig(ctx context.Context, path, content string) (ActionResult, er
 	}
 	return ActionResult{Output: "configuration applied; backup: " + backup}, nil
 }
+
 func validatedReload(ctx context.Context, server string) (ActionResult, error) {
 	if err := configTest(ctx, server); err != nil {
 		return ActionResult{}, err
@@ -203,14 +331,20 @@ func validatedReload(ctx context.Context, server string) (ActionResult, error) {
 	}
 	return ActionResult{Output: server + " reloaded"}, nil
 }
+
 func configTest(ctx context.Context, server string) error {
 	var c *exec.Cmd
 	if server == "nginx" {
+		if _, err := exec.LookPath("nginx"); err != nil {
+			return err
+		}
 		c = exec.CommandContext(ctx, "nginx", "-t")
 	} else if _, err := exec.LookPath("apachectl"); err == nil {
 		c = exec.CommandContext(ctx, "apachectl", "configtest")
-	} else {
+	} else if _, err := exec.LookPath("httpd"); err == nil {
 		c = exec.CommandContext(ctx, "httpd", "-t")
+	} else {
+		return errors.New("web server binary not found")
 	}
 	b, err := c.CombinedOutput()
 	if err != nil {
@@ -218,6 +352,7 @@ func configTest(ctx context.Context, server string) error {
 	}
 	return nil
 }
+
 func reloadServer(ctx context.Context, server string) error {
 	name := server
 	if server == "apache" {
@@ -227,9 +362,31 @@ func reloadServer(ctx context.Context, server string) error {
 			name = "httpd"
 		}
 	}
+	if exec.Command("systemctl", "is-active", "--quiet", name).Run() != nil {
+		return fmt.Errorf("%s is not active", name)
+	}
 	b, err := exec.CommandContext(ctx, "systemctl", "reload", name).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("reload failed: %s", redact(string(b)))
 	}
 	return nil
+}
+
+// preferredWebServer picks the only installed server, or nginx when both exist.
+func preferredWebServer() (string, error) {
+	_, nginxErr := exec.LookPath("nginx")
+	_, apache2Err := exec.LookPath("apache2")
+	_, httpdErr := exec.LookPath("httpd")
+	nginx := nginxErr == nil
+	apache := apache2Err == nil || httpdErr == nil
+	if nginx && !apache {
+		return "nginx", nil
+	}
+	if apache && !nginx {
+		return "apache", nil
+	}
+	if nginx && apache {
+		return "nginx", nil
+	}
+	return "", errors.New("no web server installed; install Nginx or Apache first")
 }

@@ -67,24 +67,68 @@ func executeAction(ctx context.Context, a ActionRequest) (ActionResult, error) {
 	case "web.site.create":
 		return createWebsite(ctx, a.Options)
 	case "web.site.delete":
+		return deleteWebsite(ctx, a.Resource, a.Options["server"])
+	case "cert.issue":
 		server := a.Options["server"]
 		if server == "" {
-			server = "nginx"
+			var err error
+			server, err = preferredWebServer()
+			if err != nil {
+				return ActionResult{}, err
+			}
 		}
-		return deleteWebsite(ctx, a.Resource, server)
-	case "cert.issue":
-		return issueSiteCertificate(ctx, a.Resource, a.Options["server"], a.Options["tool"], a.Options["email"])
+		return issueSiteCertificate(ctx, a.Resource, server, a.Options["tool"], a.Options["email"])
 	case "cert.renew":
 		force := strings.EqualFold(a.Options["force"], "true") || a.Options["force"] == "1"
 		return renewCertificate(ctx, a.Resource, a.Options["tool"], force)
+	case "files.write":
+		return writeFileContent(a.Resource, a.Options["content"])
+	case "files.mkdir":
+		return mkdirPath(a.Resource)
+	case "files.delete":
+		return deletePath(a.Resource)
+	case "files.rename":
+		return renamePath(a.Resource, a.Options["to"])
+	case "crontab.add":
+		return addCrontab(ctx, a.Options["schedule"], a.Options["command"])
+	case "crontab.remove":
+		return removeCrontab(ctx, a.Resource)
+	case "docker.deploy":
+		return deployDockerAndBind(ctx, a.Options)
+	case "panel.self_update":
+		ch := a.Options["channel"]
+		if ch == "" {
+			ch = a.Resource
+		}
+		return selfUpdate(ctx, ch)
 	case "package.install":
-		return installPackage(ctx, a.Resource)
+		return installSoftware(ctx, a.Resource, a.Options)
+	case "package.update":
+		return updateSoftware(ctx, a.Resource, a.Options)
+	case "web.site.rewrite":
+		return setSiteRewrite(ctx, a.Resource, a.Options["rewrite"], a.Options["server"])
 	case "notification.configure":
 		return configureNotifications(a.Options["json"])
 	case "panel.bind_domain":
-		return bindPanelDomain(ctx, normalizedDomain(a.Options["domain"]), a.Options["server"], a.Options["tool"], a.Options["email"])
+		server := a.Options["server"]
+		if server == "" {
+			var err error
+			server, err = preferredWebServer()
+			if err != nil {
+				return ActionResult{}, err
+			}
+		}
+		return bindPanelDomain(ctx, normalizedDomain(a.Options["domain"]), server, a.Options["tool"], a.Options["email"])
 	case "panel.unbind_domain":
-		return unbindPanelDomain(ctx, a.Options["server"])
+		server := a.Options["server"]
+		if server == "" {
+			var err error
+			server, err = preferredWebServer()
+			if err != nil {
+				return ActionResult{}, err
+			}
+		}
+		return unbindPanelDomain(ctx, server)
 	default:
 		return ActionResult{}, fmt.Errorf("action %q is not allowed", a.Kind)
 	}
@@ -110,7 +154,10 @@ func redact(v string) string {
 }
 func allowedService(v string) bool {
 	switch v {
-	case "nginx", "apache2", "httpd", "docker", "anpanel-web", "anpanel-agent":
+	case "nginx", "apache2", "httpd", "docker", "php-fpm", "anpanel-web", "anpanel-agent":
+		return true
+	}
+	if strings.HasPrefix(v, "php") && strings.HasSuffix(v, "-fpm") {
 		return true
 	}
 	return false
@@ -135,60 +182,6 @@ func safeComposePath(v string) (string, error) {
 	}
 	return p, nil
 }
-func installPackage(ctx context.Context, component string) (ActionResult, error) {
-	if !map[string]bool{"nginx": true, "apache": true, "docker": true, "certbot": true}[component] {
-		return ActionResult{}, errors.New("component is not in the embedded compatibility catalog")
-	}
-	osRelease, err := os.ReadFile("/etc/os-release")
-	if err != nil {
-		return ActionResult{}, err
-	}
-	values := parseOSRelease(string(osRelease))
-	id, version := values["ID"], values["VERSION_ID"]
-	apt := exec.Command("apt-get", "--version").Run() == nil
-	packages := []string{}
-	if apt {
-		switch component {
-		case "nginx":
-			packages = []string{"nginx"}
-		case "apache":
-			packages = []string{"apache2"}
-		case "certbot":
-			packages = []string{"certbot"}
-		case "docker":
-			if hasDockerRepo() {
-				packages = []string{"docker-ce", "docker-ce-cli", "containerd.io", "docker-compose-plugin"}
-			}
-		}
-	} else {
-		switch component {
-		case "nginx":
-			packages = []string{"nginx"}
-		case "apache":
-			packages = []string{"httpd"}
-		case "certbot":
-			packages = []string{"certbot"}
-		case "docker":
-			if hasDockerRepo() {
-				packages = []string{"docker-ce", "docker-ce-cli", "containerd.io", "docker-compose-plugin"}
-			}
-		}
-	}
-	if len(packages) == 0 {
-		return ActionResult{}, fmt.Errorf("%s installation is not validated for %s %s without its official repository", component, id, version)
-	}
-	if apt {
-		args := append([]string{"install", "-y", "--no-install-recommends"}, packages...)
-		return run(ctx, "apt-get", args...)
-	}
-	manager := "yum"
-	if exec.Command("dnf", "--version").Run() == nil {
-		manager = "dnf"
-	}
-	args := append([]string{"install", "-y"}, packages...)
-	return run(ctx, manager, args...)
-}
-
 func parseOSRelease(raw string) map[string]string {
 	out := map[string]string{}
 	for _, line := range strings.Split(raw, "\n") {

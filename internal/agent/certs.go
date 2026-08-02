@@ -316,5 +316,5 @@ func injectTLSIntoSiteConfig(server, raw, domain, cert, key string) string {
 	if root == "" {
 		root = defaultWebRoot(domain)
 	}
-	return siteStaticConfig(server, domain, root, cert, key)
+	return siteStaticConfig(server, domain, root, cert, key, "none")
 }

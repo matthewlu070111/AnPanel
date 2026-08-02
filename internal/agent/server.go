@@ -52,7 +52,13 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	mux.HandleFunc("/v1/services", s.auth(s.services))
 	mux.HandleFunc("/v1/docker/containers", s.auth(s.containers))
 	mux.HandleFunc("/v1/websites", s.auth(s.websites))
+	mux.HandleFunc("/v1/websites/config", s.auth(s.websiteConfig))
+	mux.HandleFunc("/v1/rewrite-rules", s.auth(s.rewriteRules))
 	mux.HandleFunc("/v1/certificates", s.auth(s.certificates))
+	mux.HandleFunc("/v1/files", s.auth(s.files))
+	mux.HandleFunc("/v1/files/content", s.auth(s.fileContent))
+	mux.HandleFunc("/v1/crontab", s.auth(s.crontab))
+	mux.HandleFunc("/v1/system", s.auth(s.system))
 	mux.HandleFunc("/v1/action", s.auth(s.action))
 	mux.HandleFunc("/v1/docker/inventory/", s.auth(s.inventory))
 	mux.HandleFunc("/v1/docker/terminal", s.auth(s.terminal))
@@ -129,6 +135,18 @@ func (s *server) websites(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonOut(w, items)
 }
+func (s *server) websiteConfig(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	raw, err := websiteConfig(path)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	jsonOut(w, map[string]string{"path": path, "content": raw})
+}
+func (s *server) rewriteRules(w http.ResponseWriter, r *http.Request) {
+	jsonOut(w, rewriteTemplates())
+}
 func (s *server) certificates(w http.ResponseWriter, r *http.Request) {
 	items, err := discoverCertificates()
 	if err != nil {
@@ -136,6 +154,33 @@ func (s *server) certificates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonOut(w, items)
+}
+func (s *server) files(w http.ResponseWriter, r *http.Request) {
+	items, err := listFiles(r.URL.Query().Get("path"))
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	jsonOut(w, items)
+}
+func (s *server) fileContent(w http.ResponseWriter, r *http.Request) {
+	content, err := readFileContent(r.URL.Query().Get("path"))
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	jsonOut(w, map[string]string{"path": r.URL.Query().Get("path"), "content": content})
+}
+func (s *server) crontab(w http.ResponseWriter, r *http.Request) {
+	items, err := listCrontab(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	jsonOut(w, items)
+}
+func (s *server) system(w http.ResponseWriter, r *http.Request) {
+	jsonOut(w, systemInfo(r.Context()))
 }
 func (s *server) action(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {

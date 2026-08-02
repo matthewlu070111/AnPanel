@@ -15,11 +15,29 @@ export type Snapshot = {
 
 export type Service = {
   name: string
+  display_name?: string
   version: string
   path: string
   status: string
   config_path: string
   installed: boolean
+  group?: string
+  conflicts?: string[]
+  install_methods?: string[]
+  default_method?: string
+  versions?: string[]
+  can_install?: boolean
+  can_update?: boolean
+  block_reason?: string
+  note?: string
+}
+
+export type RewriteRule = {
+  id: string
+  name: string
+  description: string
+  nginx: string
+  apache: string
 }
 
 export type Container = {
@@ -37,10 +55,13 @@ export type Website = {
   domains: string[]
   listen: string[]
   proxy_target: string
+  doc_root?: string
   tls: boolean
+  has_http: boolean
+  has_https: boolean
   enabled: boolean
   source_path: string
-  raw: string
+  raw?: string
 }
 
 export type Certificate = {
@@ -52,6 +73,33 @@ export type Certificate = {
   source: string
   auto_renew: boolean
   days_left: number
+}
+
+export type FileEntry = {
+  name: string
+  path: string
+  is_dir: boolean
+  size: number
+  mode: string
+  mod_time: string
+}
+
+export type CronJob = {
+  id: string
+  schedule: string
+  command: string
+  raw: string
+  enabled: boolean
+}
+
+export type SystemInfo = {
+  version: string
+  channel: string
+  web_server?: string
+  latest_stable?: string
+  latest_prerelease?: string
+  stable_url?: string
+  prerelease_url?: string
 }
 
 export type Task = {
