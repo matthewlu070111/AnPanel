@@ -1,0 +1,22 @@
+[Unit]
+Description=AnPanel web interface
+After=anpanel-agent.service
+Requires=anpanel-agent.service
+
+[Service]
+Type=simple
+User=anpanel
+Group=anpanel-agent
+ExecStart=/usr/local/bin/anpanel web
+Restart=on-failure
+RestartSec=3
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/etc/anpanel
+ReadWritePaths=/var/lib/anpanel /var/log/anpanel /run/anpanel
+
+[Install]
+WantedBy=multi-user.target

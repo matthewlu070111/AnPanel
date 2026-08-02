@@ -1,0 +1,21 @@
+name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.24.x', cache: true}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22', cache: npm, cache-dependency-path: web/package-lock.json}
+      - run: npm ci
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+      - run: go test ./...
+      - run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ./cmd/anpanel
+      - run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./cmd/anpanel
+      - run: bash -n scripts/install.sh scripts/lib/sources.sh scripts/build-installer.sh

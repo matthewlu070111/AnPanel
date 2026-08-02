@@ -1,0 +1,12 @@
+{
+  "listen": "0.0.0.0",
+  "port": 38888,
+  "database_path": "/var/lib/anpanel/anpanel.db",
+  "agent_socket": "/run/anpanel/agent.sock",
+  "agent_token_file": "/etc/anpanel/agent.token",
+  "session_key_file": "/etc/anpanel/session.key",
+  "notification_path": "/etc/anpanel/notifications.json",
+  "region": "auto",
+  "metrics_interval_seconds": 5,
+  "update_channel": "stable"
+}

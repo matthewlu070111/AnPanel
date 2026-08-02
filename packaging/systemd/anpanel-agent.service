@@ -1,0 +1,22 @@
+[Unit]
+Description=AnPanel privileged agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Group=anpanel-agent
+ExecStart=/usr/local/bin/anpanel agent
+Restart=on-failure
+RestartSec=3
+RuntimeDirectory=anpanel
+RuntimeDirectoryMode=0750
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=full
+ReadWritePaths=/etc/anpanel /var/lib/anpanel /var/log/anpanel /run/anpanel -/etc/nginx -/etc/apache2 -/etc/httpd -/etc/letsencrypt -/var/lib/letsencrypt -/var/log/letsencrypt -/root/.acme.sh
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+.gocache/
+.gomodcache/
+.npm-cache/
+.toolcache/
+web/node_modules/
+/dist/
+web/*.tsbuildinfo
+*.db
+*.db-shm
+*.db-wal
+.env
+release-private.pem
