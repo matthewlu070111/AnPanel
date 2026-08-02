@@ -62,6 +62,9 @@ jobs:
           verified_tag=false
           if [[ -n "$INPUT_VERSION" ]]; then
             version="$INPUT_VERSION"
+            if [[ "$version" == build-* || "$version" =~ -(alpha|beta|rc)([.-]|$) ]]; then
+              prerelease=true
+            fi
           elif [[ "$GITHUB_EVENT_NAME" == workflow_run ]]; then
             version=$(git tag --points-at "$SOURCE_SHA" --list 'v*' | sort -V | tail -n 1)
             if [[ -n "$version" ]]; then
@@ -107,7 +110,7 @@ jobs:
             -o dist/anpanel-linux-arm64 ./cmd/anpanel
           (cd dist && sha256sum anpanel-linux-amd64 > anpanel-linux-amd64.sha256)
           (cd dist && sha256sum anpanel-linux-arm64 > anpanel-linux-arm64.sha256)
-          make installer
+          make installer VERSION="$VERSION"
 
       - name: Create checksum manifest
         run: |

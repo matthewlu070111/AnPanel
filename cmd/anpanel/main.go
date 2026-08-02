@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/anpanel/anpanel/internal/agent"
-	"github.com/anpanel/anpanel/internal/app"
-	"github.com/anpanel/anpanel/internal/cli"
-	"github.com/anpanel/anpanel/internal/config"
+	"github.com/matthewlu070111/anpanel/internal/agent"
+	"github.com/matthewlu070111/anpanel/internal/app"
+	"github.com/matthewlu070111/anpanel/internal/cli"
+	"github.com/matthewlu070111/anpanel/internal/config"
 )
 
 var buildVersion = "dev"

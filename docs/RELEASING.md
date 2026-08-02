@@ -11,14 +11,22 @@ GitHub 要求使用 `workflow_run` 的工作流文件已经存在于默认分支
 
 ## 手动运行
 
-在 GitHub 仓库中打开 **Actions → build-release → Run workflow**。`version` 可以留空，此时版本号为 `dev-<commit>`；也可以填写符合以下规则的版本：
+在 GitHub 仓库中打开 **Actions → build-release → Run workflow**。`version` 可以留空，此时版本号为 `build-<commit>`；也可以填写符合以下规则的版本：
 
 ```text
 v0.1.0
 v0.1.0-rc.1
 ```
 
-未填写 `version` 时，工作流使用当前提交的前七位 ID 创建 `build-{commit_id}` prerelease，例如 `build-a1b2c3d`。填写版本时会以该名称创建普通 Release。两种方式都会在该次运行的 **Artifacts** 区域保留构建文件。
+未填写 `version` 时，工作流使用当前提交的前七位 ID 创建 `build-{commit_id}` prerelease，例如 `build-a1b2c3d`。填写版本时会以该名称创建 Release，其中 `build-*` 及带 `alpha`、`beta`、`rc` 的版本仍标记为 prerelease。所有方式都会在该次运行的 **Artifacts** 区域保留构建文件。
+
+每个 Release 中的 `install.sh` 都会内嵌该次构建版本。直接下载 prerelease 的安装脚本时，它默认安装同一个 `build-*` 版本，而不是回退到 latest 稳定版；仍可用 `--version=...` 或 `ANPANEL_VERSION=...` 显式覆盖。
+
+例如安装指定的自动构建版本：
+
+```bash
+curl -fsSL https://github.com/matthewlu070111/anpanel/releases/download/build-a1b2c3d/install.sh | sudo bash
+```
 
 ## 创建正式 Release
 

@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/anpanel/anpanel/internal/domain"
+	"github.com/matthewlu070111/anpanel/internal/domain"
 )
 
 type cpuSample struct{ idle, total uint64 }

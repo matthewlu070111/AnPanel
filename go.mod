@@ -1,4 +1,4 @@
-module github.com/anpanel/anpanel
+module github.com/matthewlu070111/anpanel
 
 go 1.24.0
 

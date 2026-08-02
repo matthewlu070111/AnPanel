@@ -1,6 +1,7 @@
 VERSION ?= dev
 GO ?= go
 NPM ?= npm
+INSTALLER_VERSION = $(if $(filter dev,$(VERSION)),latest,$(VERSION))
 
 .PHONY: all web test build release installer clean
 all: test build
@@ -24,8 +25,7 @@ release: web
 	$(MAKE) installer
 
 installer:
-	bash scripts/build-installer.sh dist/install.sh
+	ANPANEL_INSTALLER_VERSION="$(INSTALLER_VERSION)" bash scripts/build-installer.sh dist/install.sh
 
 clean:
 	rm -rf dist web/node_modules .gocache .gomodcache
-

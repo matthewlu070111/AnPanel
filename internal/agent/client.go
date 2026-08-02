@@ -11,8 +11,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/anpanel/anpanel/internal/config"
-	"github.com/anpanel/anpanel/internal/domain"
+	"github.com/matthewlu070111/anpanel/internal/config"
+	"github.com/matthewlu070111/anpanel/internal/domain"
 )
 
 type Client struct {

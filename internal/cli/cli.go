@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/anpanel/anpanel/internal/config"
-	"github.com/anpanel/anpanel/internal/store"
+	"github.com/matthewlu070111/anpanel/internal/config"
+	"github.com/matthewlu070111/anpanel/internal/store"
 )
 
 func Run(args []string) int {
@@ -40,7 +40,8 @@ func Run(args []string) int {
 			return fail(err)
 		}
 		if !created {
-			return fail(fmt.Errorf("administrator already exists"))
+			fmt.Println("administrator already exists; credentials unchanged")
+			break
 		}
 		fmt.Printf("username: admin\npassword: %s\n", password)
 	case "reset-admin":

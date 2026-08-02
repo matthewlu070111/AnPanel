@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/anpanel/anpanel/internal/cli"
+	"github.com/matthewlu070111/anpanel/internal/cli"
 	"os"
 )
 

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-VERSION=${ANPANEL_VERSION:-latest}
+VERSION=${ANPANEL_VERSION:-latest} # anpanel:version
 REGION_OVERRIDE=auto
 OPEN_FIREWALL=0
-RELEASE_BASE=${ANPANEL_RELEASE_BASE:-https://github.com/anpanel/anpanel/releases}
+RELEASE_BASE=${ANPANEL_RELEASE_BASE:-https://github.com/matthewlu070111/anpanel/releases}
 EOL_WARNING=''
 
 for arg in "$@"; do
@@ -59,11 +59,15 @@ mkdir -p /var/lib/anpanel/backups
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/sources.sh
 source "$SCRIPT_DIR/lib/sources.sh"
-configure_sources
 
 if [[ "$VERSION" == latest ]]; then
   VERSION=$(curl -fsSL --max-time 10 "$RELEASE_BASE/latest" -o /dev/null -w '%{url_effective}' | sed 's#.*/tag/##')
 fi
+[[ -n "$VERSION" ]] || { echo 'Could not resolve a release version.' >&2; exit 1; }
+UPDATE_CHANNEL=stable
+case "$VERSION" in
+  build-*|*-alpha*|*-beta*|*-rc*) UPDATE_CHANNEL=prerelease ;;
+esac
 ASSET="anpanel-linux-$ARCH"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 curl -fL --retry 3 "$RELEASE_BASE/download/$VERSION/$ASSET" -o "$TMP/$ASSET"
@@ -75,6 +79,10 @@ if [[ -n ${ANPANEL_RELEASE_PUBLIC_KEY:-} ]]; then
   openssl pkeyutl -verify -pubin -inkey "$ANPANEL_RELEASE_PUBLIC_KEY" -rawin -in "$TMP/$ASSET" -sigfile "$TMP/$ASSET.sig"
 fi
 
+# Do not change system repositories until the requested release has been
+# downloaded and verified successfully.
+configure_sources
+
 install -m 0755 "$TMP/$ASSET" /usr/local/bin/anpanel
 ln -sf /usr/local/bin/anpanel /usr/local/bin/anpanelctl
 getent group anpanel-agent >/dev/null || groupadd --system anpanel-agent
@@ -84,22 +92,31 @@ install -d -o root -g anpanel-agent -m 0750 /etc/anpanel /run/anpanel
 install -d -o root -g root -m 0750 /etc/anpanel/compose
 
 PORT=''
-for _ in $(seq 1 100); do
-  candidate=$(shuf -i 20000-60000 -n 1)
-  if ! ss -H -ltn "sport = :$candidate" 2>/dev/null | grep -q .; then PORT=$candidate; break; fi
-done
-[[ -n "$PORT" ]] || { echo 'Could not find a free port.' >&2; exit 1; }
-umask 0077
-head -c 48 /dev/urandom | base64 > /etc/anpanel/agent.token
-head -c 48 /dev/urandom | base64 > /etc/anpanel/session.key
-cat > /etc/anpanel/config.json <<EOF
-{"listen":"0.0.0.0","port":$PORT,"database_path":"/var/lib/anpanel/anpanel.db","agent_socket":"/run/anpanel/agent.sock","agent_token_file":"/etc/anpanel/agent.token","session_key_file":"/etc/anpanel/session.key","notification_path":"/etc/anpanel/notifications.json","region":"$REGION","metrics_interval_seconds":5,"update_channel":"stable"}
+if [[ -f /etc/anpanel/config.json ]]; then
+  PORT=$(/usr/local/bin/anpanel ctl show-port)
+  [[ "$PORT" =~ ^[0-9]+$ ]] || { echo 'Existing AnPanel port is invalid.' >&2; exit 1; }
+  echo 'Existing AnPanel configuration and administrator will be preserved.'
+else
+  for _ in $(seq 1 100); do
+    candidate=$(shuf -i 20000-60000 -n 1)
+    if ! ss -H -ltn "sport = :$candidate" 2>/dev/null | grep -q .; then PORT=$candidate; break; fi
+  done
+  [[ -n "$PORT" ]] || { echo 'Could not find a free port.' >&2; exit 1; }
+  umask 0077
+  head -c 48 /dev/urandom | base64 > /etc/anpanel/agent.token
+  head -c 48 /dev/urandom | base64 > /etc/anpanel/session.key
+  cat > /etc/anpanel/config.json <<EOF
+{"listen":"0.0.0.0","port":$PORT,"database_path":"/var/lib/anpanel/anpanel.db","agent_socket":"/run/anpanel/agent.sock","agent_token_file":"/etc/anpanel/agent.token","session_key_file":"/etc/anpanel/session.key","notification_path":"/etc/anpanel/notifications.json","region":"$REGION","metrics_interval_seconds":5,"update_channel":"$UPDATE_CHANNEL"}
 EOF
-printf '{}\n' > /etc/anpanel/notifications.json
+fi
+if [[ ! -f /etc/anpanel/notifications.json ]]; then
+  umask 0077
+  printf '{}\n' > /etc/anpanel/notifications.json
+fi
 chown anpanel:anpanel-agent /etc/anpanel/notifications.json
 chmod 0600 /etc/anpanel/notifications.json
-chown root:anpanel-agent /etc/anpanel/config.json /etc/anpanel/agent.token
-chmod 0640 /etc/anpanel/config.json /etc/anpanel/agent.token
+chown root:anpanel-agent /etc/anpanel/config.json /etc/anpanel/agent.token /etc/anpanel/session.key
+chmod 0640 /etc/anpanel/config.json /etc/anpanel/agent.token /etc/anpanel/session.key
 
 cat > /etc/systemd/system/anpanel-agent.service <<'UNIT'
 [Unit]
@@ -118,7 +135,7 @@ UMask=0027
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=read-only
-ProtectSystem=full
+ProtectSystem=false
 ReadWritePaths=/etc/anpanel /var/lib/anpanel /var/log/anpanel /run/anpanel -/etc/nginx -/etc/apache2 -/etc/httpd -/etc/letsencrypt -/var/lib/letsencrypt -/var/log/letsencrypt -/root/.acme.sh
 [Install]
 WantedBy=multi-user.target
@@ -145,6 +162,7 @@ ReadWritePaths=/var/lib/anpanel /var/log/anpanel /run/anpanel
 [Install]
 WantedBy=multi-user.target
 UNIT
+chmod 0644 /etc/systemd/system/anpanel-agent.service /etc/systemd/system/anpanel-web.service
 ADMIN_CREDENTIALS=$(/usr/local/bin/anpanel ctl init-admin)
 chown -R anpanel:anpanel-agent /var/lib/anpanel
 systemctl daemon-reload

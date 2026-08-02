@@ -1,7 +1,7 @@
 # AnPanel
 
-[![CI](https://github.com/anpanel/anpanel/actions/workflows/ci.yml/badge.svg)](https://github.com/anpanel/anpanel/actions/workflows/ci.yml)
-[![Build and release](https://github.com/anpanel/anpanel/actions/workflows/release.yml/badge.svg)](https://github.com/anpanel/anpanel/actions/workflows/release.yml)
+[![CI](https://github.com/matthewlu070111/anpanel/actions/workflows/ci.yml/badge.svg)](https://github.com/matthewlu070111/anpanel/actions/workflows/ci.yml)
+[![Build and release](https://github.com/matthewlu070111/anpanel/actions/workflows/release.yml/badge.svg)](https://github.com/matthewlu070111/anpanel/actions/workflows/release.yml)
 
 AnPanel 是面向单台 Linux 服务器的轻量监控与服务管理面板。后端使用 Go，React + TypeScript 管理端嵌入同一个静态二进制；服务器运行时不依赖 Node.js、PHP 或外部数据库。
 
@@ -49,7 +49,7 @@ EOL 系统使用归档源只能维持软件包可获取性，不能恢复安全�
 从 GitHub Release 安装最新版本：
 
 ```bash
-curl -fsSL https://github.com/anpanel/anpanel/releases/latest/download/install.sh | sudo bash
+curl -fsSL https://github.com/matthewlu070111/anpanel/releases/latest/download/install.sh | sudo bash
 ```
 
 常用参数：

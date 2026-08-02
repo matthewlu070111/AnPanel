@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/anpanel/anpanel/internal/config"
+	"github.com/matthewlu070111/anpanel/internal/config"
 )
 
 var domainName = regexp.MustCompile(`^(?i:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)$`)
