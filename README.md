@@ -60,6 +60,14 @@ sudo bash install.sh --region=global --open-firewall
 sudo bash install.sh --version=v0.1.0
 ```
 
+安装默认分支 CI 最近一次成功构建的 prerelease：
+
+```bash
+curl -fsSL https://github.com/matthewlu070111/anpanel/releases/download/prerelease-latest/install.sh | sudo bash
+```
+
+这个固定地址只提供安装入口；安装器内部锁定实际的 `build-{commit_id}`，不会回退到 stable。
+
 - `--region=cn|global`：覆盖自动地区判断。
 - `--open-firewall`：显式放行面板随机端口；默认不修改主机防火墙，也不会修改云安全组。
 - `--version`：安装指定 Release 标签。

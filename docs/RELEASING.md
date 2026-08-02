@@ -7,6 +7,12 @@
 
 自动发布只接收成功的 `push` CI，不接收 pull request CI。普通提交会生成 `build-{commit_id}` prerelease；如果该提交带有 `v*` 标签，则生成对应的正式 Release。
 
+默认分支每次 prerelease 发布还会更新 `prerelease-latest` 中的安装器，因此最新成功构建始终可以通过固定地址安装：
+
+```bash
+curl -fsSL https://github.com/matthewlu070111/anpanel/releases/download/prerelease-latest/install.sh | sudo bash
+```
+
 GitHub 要求使用 `workflow_run` 的工作流文件已经存在于默认分支，因此首次启用时需要先将 `release.yml` 合并到默认分支。
 
 ## 手动运行

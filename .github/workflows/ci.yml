@@ -51,3 +51,7 @@ jobs:
           ANPANEL_INSTALLER_VERSION=build-ci bash scripts/build-installer.sh /tmp/install.sh
           bash -n /tmp/install.sh
           grep -F 'VERSION=${ANPANEL_VERSION:-build-ci}' /tmp/install.sh
+          if grep -q 'BASH_SOURCE' /tmp/install.sh; then
+            echo 'Self-contained installer still depends on BASH_SOURCE.' >&2
+            exit 1
+          fi

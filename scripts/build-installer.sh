@@ -10,6 +10,7 @@ awk -v lib="$ROOT/scripts/lib/sources.sh" -v version="$INSTALLER_VERSION" '
     printf "VERSION=${ANPANEL_VERSION:-%s}\n", version
     next
   }
+  /^SCRIPT_DIR=.*BASH_SOURCE/ { next }
   /^# shellcheck source=lib\/sources.sh$/ {
     getline
     while ((getline line < lib) > 0) {

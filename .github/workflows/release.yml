@@ -190,3 +190,30 @@ jobs:
               --generate-notes \
               --target "$SOURCE_SHA"
           fi
+
+      - name: Update latest prerelease installer alias
+        if: >-
+          steps.version.outputs.prerelease == 'true' &&
+          (github.event_name == 'workflow_dispatch' ||
+          github.event.workflow_run.head_branch == github.event.repository.default_branch)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.value }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          alias_tag=prerelease-latest
+          notes="This moving alias installs AnPanel $VERSION. Use the immutable $VERSION release for reproducible deployments."
+          if gh release view "$alias_tag" >/dev/null 2>&1; then
+            gh release upload "$alias_tag" dist/install.sh --clobber
+            gh release edit "$alias_tag" \
+              --title "Latest AnPanel prerelease ($VERSION)" \
+              --notes "$notes" \
+              --prerelease
+          else
+            gh release create "$alias_tag" dist/install.sh \
+              --title "Latest AnPanel prerelease ($VERSION)" \
+              --notes "$notes" \
+              --target "$SOURCE_SHA" \
+              --prerelease
+          fi
