@@ -34,7 +34,7 @@ if command -v apt-get >/dev/null; then PKG_FAMILY=apt; else PKG_FAMILY=rpm; fi
 detect_region() {
   [[ "$REGION_OVERRIDE" != auto ]] && { echo "$REGION_OVERRIDE"; return; }
   local country=''
-  country=$(curl -fsS --max-time 3 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | awk -F= '$1=="loc"{print $2}') || true
+  country=$(curl -qfsS --max-time 3 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | awk -F= '$1=="loc"{print $2}') || true
   [[ "$country" == CN ]] && echo cn || echo global
 }
 REGION=$(detect_region)
@@ -42,7 +42,7 @@ REGION=$(detect_region)
 pick_fastest() {
   local best='' best_time=999999 candidate result
   for candidate in "$@"; do
-	    result=$(curl -Lso /dev/null --connect-timeout 2 --max-time 5 -w '%{time_total}' "$candidate/debian/README" 2>/dev/null) || continue
+	    result=$(curl -qLso /dev/null --connect-timeout 2 --max-time 5 -w '%{time_total}' "$candidate/debian/README" 2>/dev/null) || continue
     awk "BEGIN{exit !($result < $best_time)}" && { best=$candidate; best_time=$result; }
   done
 	  [[ -n "$best" ]] && echo "$best" || return 1
@@ -61,21 +61,32 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$SCRIPT_DIR/lib/sources.sh"
 
 if [[ "$VERSION" == latest ]]; then
-  VERSION=$(curl -fsSL --max-time 10 "$RELEASE_BASE/latest" -o /dev/null -w '%{url_effective}' | sed 's#.*/tag/##')
+  VERSION=$(curl -qfsSL --max-time 10 "$RELEASE_BASE/latest" -o /dev/null -w '%{url_effective}' | sed 's#.*/tag/##')
 fi
 [[ -n "$VERSION" ]] || { echo 'Could not resolve a release version.' >&2; exit 1; }
+RELEASE_BASE=${RELEASE_BASE%/}
+[[ "$VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$ ]] || { echo "Invalid release version: $VERSION" >&2; exit 2; }
+[[ "$RELEASE_BASE" =~ ^https://[^[:space:]]+$ ]] || { echo "Invalid release base URL: $RELEASE_BASE" >&2; exit 2; }
 UPDATE_CHANNEL=stable
 case "$VERSION" in
   build-*|*-alpha*|*-beta*|*-rc*) UPDATE_CHANNEL=prerelease ;;
 esac
 ASSET="anpanel-linux-$ARCH"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
-curl -fL --retry 3 "$RELEASE_BASE/download/$VERSION/$ASSET" -o "$TMP/$ASSET"
-curl -fL --retry 3 "$RELEASE_BASE/download/$VERSION/$ASSET.sha256" -o "$TMP/$ASSET.sha256"
+download_release_asset() {
+  local name=$1 destination=$2 url="$RELEASE_BASE/download/$VERSION/$name"
+  printf '[AnPanel] Downloading %s from %s\n' "$name" "$url"
+  # -q disables ~/.curlrc so host-specific curl settings cannot corrupt URLs.
+  curl -qfL --show-error --retry 3 --connect-timeout 10 --max-time 300 \
+    --proto '=https' --tlsv1.2 -o "$destination" -- "$url"
+}
+printf '[AnPanel] Release: %s (%s)\n' "$VERSION" "$ARCH"
+download_release_asset "$ASSET" "$TMP/$ASSET"
+download_release_asset "$ASSET.sha256" "$TMP/$ASSET.sha256"
 (cd "$TMP" && sha256sum -c "$ASSET.sha256")
 if [[ -n ${ANPANEL_RELEASE_PUBLIC_KEY:-} ]]; then
   command -v openssl >/dev/null || { echo 'openssl is required for signature verification.' >&2; exit 1; }
-  curl -fL --retry 3 "$RELEASE_BASE/download/$VERSION/$ASSET.sig" -o "$TMP/$ASSET.sig"
+  download_release_asset "$ASSET.sig" "$TMP/$ASSET.sig"
   openssl pkeyutl -verify -pubin -inkey "$ANPANEL_RELEASE_PUBLIC_KEY" -rawin -in "$TMP/$ASSET" -sigfile "$TMP/$ASSET.sig"
 fi
 

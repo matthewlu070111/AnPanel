@@ -49,7 +49,7 @@ EOL 系统使用归档源只能维持软件包可获取性，不能恢复安全�
 从 GitHub Release 安装最新版本：
 
 ```bash
-curl -fsSL https://github.com/matthewlu070111/anpanel/releases/latest/download/install.sh | sudo bash
+curl -qfsSL https://github.com/matthewlu070111/anpanel/releases/latest/download/install.sh | sudo bash
 ```
 
 常用参数：
@@ -63,7 +63,7 @@ sudo bash install.sh --version=v0.1.0
 安装默认分支 CI 最近一次成功构建的 prerelease：
 
 ```bash
-curl -fsSL https://github.com/matthewlu070111/anpanel/releases/download/prerelease-latest/install.sh | sudo bash
+curl -qfsSL https://github.com/matthewlu070111/anpanel/releases/download/prerelease-latest/install.sh | sudo bash
 ```
 
 这个固定地址只提供安装入口；安装器内部锁定实际的 `build-{commit_id}`，不会回退到 stable。

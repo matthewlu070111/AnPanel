@@ -10,7 +10,7 @@
 默认分支每次 prerelease 发布还会更新 `prerelease-latest` 中的安装器，因此最新成功构建始终可以通过固定地址安装：
 
 ```bash
-curl -fsSL https://github.com/matthewlu070111/anpanel/releases/download/prerelease-latest/install.sh | sudo bash
+curl -qfsSL https://github.com/matthewlu070111/anpanel/releases/download/prerelease-latest/install.sh | sudo bash
 ```
 
 GitHub 要求使用 `workflow_run` 的工作流文件已经存在于默认分支，因此首次启用时需要先将 `release.yml` 合并到默认分支。
@@ -31,7 +31,7 @@ v0.1.0-rc.1
 例如安装指定的自动构建版本：
 
 ```bash
-curl -fsSL https://github.com/matthewlu070111/anpanel/releases/download/build-a1b2c3d/install.sh | sudo bash
+curl -qfsSL https://github.com/matthewlu070111/anpanel/releases/download/build-a1b2c3d/install.sh | sudo bash
 ```
 
 ## 创建正式 Release
