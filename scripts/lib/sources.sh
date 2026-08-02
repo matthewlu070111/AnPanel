@@ -35,6 +35,46 @@ replace_uri_in_file() {
 ubuntu_advantage_attached() { command -v pro >/dev/null && pro status 2>/dev/null | grep -qiE 'esm-(apps|infra).*enabled'; }
 freexian_elts_active() { find /etc/apt/sources.list.d -maxdepth 1 -type f -iname '*freexian*' 2>/dev/null | grep -q .; }
 
+apt_sources_contain() {
+  local paths=()
+  [[ -f /etc/apt/sources.list ]] && paths+=(/etc/apt/sources.list)
+  [[ -d /etc/apt/sources.list.d ]] && paths+=(/etc/apt/sources.list.d)
+  ((${#paths[@]} > 0)) || return 1
+  grep -RqsE "$1" "${paths[@]}" 2>/dev/null
+}
+
+rpm_sources_contain() {
+  local files=()
+  while IFS= read -r -d '' f; do files+=("$f"); done < <(
+    find /etc/yum.repos.d -maxdepth 1 -type f \
+      \( -name 'Rocky-*.repo' -o -name 'almalinux*.repo' \) -print0 2>/dev/null
+  )
+  ((${#files[@]} > 0)) || return 1
+  grep -qsE "$1" "${files[@]}" 2>/dev/null
+}
+
+sources_need_change() {
+  if [[ "$PKG_FAMILY" == apt ]]; then
+    case "$OS_ID:$OS_VERSION" in
+      ubuntu:18.04) ! ubuntu_advantage_attached ;;
+      debian:10) ! freexian_elts_active ;;
+      ubuntu:*) [[ "$REGION" == cn ]] && apt_sources_contain 'archive\.ubuntu\.com/ubuntu|ports\.ubuntu\.com/ubuntu-ports' ;;
+      debian:*) [[ "$REGION" == cn ]] && apt_sources_contain 'deb\.debian\.org/debian' ;;
+      *) return 1 ;;
+    esac
+    return
+  fi
+
+  if [[ "$OS_ID" == centos && "$OS_VERSION" == 7* ]]; then
+    return 0
+  fi
+  if [[ "$REGION" == cn && ( "$OS_ID" == rocky || "$OS_ID" == almalinux ) ]]; then
+    rpm_sources_contain '^(mirrorlist=|#?baseurl=https?://(dl\.rockylinux\.org|repo\.almalinux\.org))'
+    return
+  fi
+  return 1
+}
+
 configure_apt_sources() {
   local files=()
   [[ -f /etc/apt/sources.list ]] && files+=(/etc/apt/sources.list)
@@ -99,6 +139,10 @@ configure_rpm_sources() {
 }
 
 configure_sources() {
+  if ! sources_need_change; then
+    source_log "no repository changes required for $OS_ID $OS_VERSION in region $REGION"
+    return 0
+  fi
   backup_sources
   if [[ "$PKG_FAMILY" == apt ]]; then configure_apt_sources; else configure_rpm_sources; fi
 }

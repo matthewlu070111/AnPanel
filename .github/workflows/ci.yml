@@ -50,9 +50,22 @@ jobs:
           bash -n scripts/install.sh scripts/lib/sources.sh scripts/build-installer.sh
           ANPANEL_INSTALLER_VERSION=build-ci bash scripts/build-installer.sh /tmp/install.sh
           bash -n /tmp/install.sh
-          grep -F 'VERSION=${ANPANEL_VERSION:-build-ci}' /tmp/install.sh
+          grep -F 'TARGET_VERSION=${ANPANEL_VERSION:-build-ci}' /tmp/install.sh
+          if grep -q '^VERSION=${ANPANEL_VERSION' /tmp/install.sh; then
+            echo 'Release version still collides with /etc/os-release VERSION.' >&2
+            exit 1
+          fi
           grep -F 'curl -qfL --show-error' /tmp/install.sh
           if grep -q 'BASH_SOURCE' /tmp/install.sh; then
             echo 'Self-contained installer still depends on BASH_SOURCE.' >&2
+            exit 1
+          fi
+          source scripts/lib/sources.sh
+          PKG_FAMILY=apt
+          OS_ID=debian
+          OS_VERSION=13
+          REGION=global
+          if sources_need_change; then
+            echo 'A supported global Debian release unexpectedly requests a source change.' >&2
             exit 1
           fi

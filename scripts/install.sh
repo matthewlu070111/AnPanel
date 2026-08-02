@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-VERSION=${ANPANEL_VERSION:-latest} # anpanel:version
+TARGET_VERSION=${ANPANEL_VERSION:-latest} # anpanel:version
 REGION_OVERRIDE=auto
 OPEN_FIREWALL=0
 RELEASE_BASE=${ANPANEL_RELEASE_BASE:-https://github.com/matthewlu070111/anpanel/releases}
@@ -10,7 +10,7 @@ EOL_WARNING=''
 for arg in "$@"; do
   case "$arg" in
     --region=cn|--region=global) REGION_OVERRIDE=${arg#*=} ;;
-    --version=*) VERSION=${arg#*=} ;;
+    --version=*) TARGET_VERSION=${arg#*=} ;;
     --open-firewall) OPEN_FIREWALL=1 ;;
     *) printf 'Unknown option: %s\n' "$arg" >&2; exit 2 ;;
   esac
@@ -60,27 +60,27 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/sources.sh
 source "$SCRIPT_DIR/lib/sources.sh"
 
-if [[ "$VERSION" == latest ]]; then
-  VERSION=$(curl -qfsSL --max-time 10 "$RELEASE_BASE/latest" -o /dev/null -w '%{url_effective}' | sed 's#.*/tag/##')
+if [[ "$TARGET_VERSION" == latest ]]; then
+  TARGET_VERSION=$(curl -qfsSL --max-time 10 "$RELEASE_BASE/latest" -o /dev/null -w '%{url_effective}' | sed 's#.*/tag/##')
 fi
-[[ -n "$VERSION" ]] || { echo 'Could not resolve a release version.' >&2; exit 1; }
+[[ -n "$TARGET_VERSION" ]] || { echo 'Could not resolve a release version.' >&2; exit 1; }
 RELEASE_BASE=${RELEASE_BASE%/}
-[[ "$VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$ ]] || { echo "Invalid release version: $VERSION" >&2; exit 2; }
+[[ "$TARGET_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$ ]] || { echo "Invalid release version: $TARGET_VERSION" >&2; exit 2; }
 [[ "$RELEASE_BASE" =~ ^https://[^[:space:]]+$ ]] || { echo "Invalid release base URL: $RELEASE_BASE" >&2; exit 2; }
 UPDATE_CHANNEL=stable
-case "$VERSION" in
+case "$TARGET_VERSION" in
   build-*|*-alpha*|*-beta*|*-rc*) UPDATE_CHANNEL=prerelease ;;
 esac
 ASSET="anpanel-linux-$ARCH"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 download_release_asset() {
-  local name=$1 destination=$2 url="$RELEASE_BASE/download/$VERSION/$name"
+  local name=$1 destination=$2 url="$RELEASE_BASE/download/$TARGET_VERSION/$name"
   printf '[AnPanel] Downloading %s from %s\n' "$name" "$url"
   # -q disables ~/.curlrc so host-specific curl settings cannot corrupt URLs.
   curl -qfL --show-error --retry 3 --connect-timeout 10 --max-time 300 \
     --proto '=https' --tlsv1.2 -o "$destination" -- "$url"
 }
-printf '[AnPanel] Release: %s (%s)\n' "$VERSION" "$ARCH"
+printf '[AnPanel] Release: %s (%s)\n' "$TARGET_VERSION" "$ARCH"
 download_release_asset "$ASSET" "$TMP/$ASSET"
 download_release_asset "$ASSET.sha256" "$TMP/$ASSET.sha256"
 (cd "$TMP" && sha256sum -c "$ASSET.sha256")

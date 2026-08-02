@@ -6,8 +6,8 @@ INSTALLER_VERSION=${ANPANEL_INSTALLER_VERSION:-latest}
 [[ "$INSTALLER_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$ ]] || { echo "Invalid installer version: $INSTALLER_VERSION" >&2; exit 2; }
 mkdir -p "$(dirname "$OUT")"
 awk -v lib="$ROOT/scripts/lib/sources.sh" -v version="$INSTALLER_VERSION" '
-  /^VERSION=.*# anpanel:version$/ {
-    printf "VERSION=${ANPANEL_VERSION:-%s}\n", version
+  /^TARGET_VERSION=.*# anpanel:version$/ {
+    printf "TARGET_VERSION=${ANPANEL_VERSION:-%s}\n", version
     next
   }
   /^SCRIPT_DIR=.*BASH_SOURCE/ { next }
