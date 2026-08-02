@@ -1,0 +1,155 @@
+name: build-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Build version (for example v0.1.0; optional for artifact builds)
+        required: false
+        type: string
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: build-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Linux release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Resolve build version
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            version="$GITHUB_REF_NAME"
+          elif [[ -n "$INPUT_VERSION" ]]; then
+            version="$INPUT_VERSION"
+          else
+            version="dev-${GITHUB_SHA::7}"
+          fi
+          if [[ ! "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$ ]]; then
+            echo "Invalid version: $version" >&2
+            exit 1
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Verify source
+        run: |
+          npm run lint --prefix web
+          npm run build --prefix web
+          go vet ./...
+          go test ./...
+          bash -n scripts/install.sh scripts/lib/sources.sh scripts/build-installer.sh
+
+      - name: Build amd64 and arm64 assets
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          mkdir -p dist
+          GOOS=linux GOARCH=amd64 go build -trimpath \
+            -ldflags "-s -w -X main.buildVersion=$VERSION" \
+            -o dist/anpanel-linux-amd64 ./cmd/anpanel
+          GOOS=linux GOARCH=arm64 go build -trimpath \
+            -ldflags "-s -w -X main.buildVersion=$VERSION" \
+            -o dist/anpanel-linux-arm64 ./cmd/anpanel
+          (cd dist && sha256sum anpanel-linux-amd64 > anpanel-linux-amd64.sha256)
+          (cd dist && sha256sum anpanel-linux-arm64 > anpanel-linux-arm64.sha256)
+          make installer
+
+      - name: Create checksum manifest
+        run: |
+          cd dist
+          sha256sum anpanel-linux-amd64 anpanel-linux-arm64 install.sh > SHA256SUMS
+
+      - name: Sign binaries when a key is configured
+        shell: bash
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.ANPANEL_RELEASE_PRIVATE_KEY }}
+        run: |
+          if [[ -z "$RELEASE_SIGNING_KEY" ]]; then
+            echo "ANPANEL_RELEASE_PRIVATE_KEY is not configured; publishing checksums only."
+            exit 0
+          fi
+          key_file="$RUNNER_TEMP/anpanel-release-key.pem"
+          trap 'rm -f "$key_file"' EXIT
+          printf '%s' "$RELEASE_SIGNING_KEY" > "$key_file"
+          chmod 600 "$key_file"
+          for asset in dist/anpanel-linux-amd64 dist/anpanel-linux-arm64; do
+            openssl pkeyutl -sign -rawin -inkey "$key_file" -in "$asset" -out "$asset.sig"
+          done
+          rm -f "$key_file"
+          trap - EXIT
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: anpanel-${{ steps.version.outputs.value }}
+          path: |
+            dist/anpanel-linux-amd64
+            dist/anpanel-linux-amd64.sha256
+            dist/*.sig
+            dist/anpanel-linux-arm64
+            dist/anpanel-linux-arm64.sha256
+            dist/install.sh
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          assets=(
+            dist/anpanel-linux-amd64
+            dist/anpanel-linux-amd64.sha256
+            dist/anpanel-linux-arm64
+            dist/anpanel-linux-arm64.sha256
+            dist/install.sh
+            dist/SHA256SUMS
+          )
+          for signature in dist/*.sig; do
+            [[ -e "$signature" ]] && assets+=("$signature")
+          done
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release upload "$VERSION" "${assets[@]}" --clobber
+          else
+            gh release create "$VERSION" "${assets[@]}" \
+              --title "AnPanel $VERSION" \
+              --generate-notes \
+              --verify-tag
+          fi

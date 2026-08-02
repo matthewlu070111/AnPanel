@@ -66,16 +66,16 @@ if [[ "$VERSION" == latest ]]; then
 fi
 ASSET="anpanel-linux-$ARCH"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
-curl -fL --retry 3 "$RELEASE_BASE/download/$VERSION/$ASSET" -o "$TMP/anpanel"
-curl -fL --retry 3 "$RELEASE_BASE/download/$VERSION/$ASSET.sha256" -o "$TMP/anpanel.sha256"
-(cd "$TMP" && sha256sum -c anpanel.sha256)
+curl -fL --retry 3 "$RELEASE_BASE/download/$VERSION/$ASSET" -o "$TMP/$ASSET"
+curl -fL --retry 3 "$RELEASE_BASE/download/$VERSION/$ASSET.sha256" -o "$TMP/$ASSET.sha256"
+(cd "$TMP" && sha256sum -c "$ASSET.sha256")
 if [[ -n ${ANPANEL_RELEASE_PUBLIC_KEY:-} ]]; then
   command -v openssl >/dev/null || { echo 'openssl is required for signature verification.' >&2; exit 1; }
-  curl -fL --retry 3 "$RELEASE_BASE/download/$VERSION/$ASSET.sig" -o "$TMP/anpanel.sig"
-  openssl pkeyutl -verify -pubin -inkey "$ANPANEL_RELEASE_PUBLIC_KEY" -rawin -in "$TMP/anpanel" -sigfile "$TMP/anpanel.sig"
+  curl -fL --retry 3 "$RELEASE_BASE/download/$VERSION/$ASSET.sig" -o "$TMP/$ASSET.sig"
+  openssl pkeyutl -verify -pubin -inkey "$ANPANEL_RELEASE_PUBLIC_KEY" -rawin -in "$TMP/$ASSET" -sigfile "$TMP/$ASSET.sig"
 fi
 
-install -m 0755 "$TMP/anpanel" /usr/local/bin/anpanel
+install -m 0755 "$TMP/$ASSET" /usr/local/bin/anpanel
 ln -sf /usr/local/bin/anpanel /usr/local/bin/anpanelctl
 getent group anpanel-agent >/dev/null || groupadd --system anpanel-agent
 id anpanel >/dev/null 2>&1 || useradd --system --home /var/lib/anpanel --shell /usr/sbin/nologin --gid anpanel-agent anpanel

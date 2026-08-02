@@ -1,47 +1,58 @@
 # AnPanel
 
-AnPanel 是一个面向单台 Linux 服务器的轻量监控与服务管理面板。后端使用 Go，React 管理端被嵌入同一个静态二进制；运行时不需要 Node.js、外部数据库或 PHP。
+[![CI](https://github.com/anpanel/anpanel/actions/workflows/ci.yml/badge.svg)](https://github.com/anpanel/anpanel/actions/workflows/ci.yml)
+[![Build and release](https://github.com/anpanel/anpanel/actions/workflows/release.yml/badge.svg)](https://github.com/anpanel/anpanel/actions/workflows/release.yml)
 
-> 当前仓库是可运行的首版实现。生产部署前仍应在目标发行版 VM 中完成安装器和 Web 服务配置回滚测试，尤其是 CentOS 7、Ubuntu 18.04 与已有复杂 Nginx/Apache 配置的服务器。
+AnPanel 是面向单台 Linux 服务器的轻量监控与服务管理面板。后端使用 Go，React + TypeScript 管理端嵌入同一个静态二进制；服务器运行时不依赖 Node.js、PHP 或外部数据库。
 
-## 已实现
+> 项目目前处于首版工程验证阶段。核心链路可以构建和运行，但正式部署前仍应在目标发行版 VM 中验证安装、换源和 Web 配置回滚，尤其是 EOL 系统与已有复杂 Nginx/Apache 配置的服务器。
 
-- `anpanel web` 与 `anpanel agent` 双服务权限边界；root agent 只接受固定动作，不接受任意 Shell。
-- SQLite WAL、Argon2id、强制首次改密、TOTP、CSRF、登录限速、会话撤销和审计日志。
-- `/proc` 主机指标、历史保留、实时 WebSocket 仪表盘。
-- 1 分钟七天、5 分钟九十天的分层指标，以及 SMTP/Webhook 阈值和恢复告警。
-- Docker 容器生命周期，以及镜像、网络、卷、Compose 的受限 API。
-- Nginx/Apache 虚拟主机发现、原始指令保留、原子更新、语法检查和 reload 失败回滚。
-- certbot/acme.sh 域名绑定、证书失败回滚、IP 入口恢复和受限 Docker 容器终端。
-- 组件检测与受兼容目录限制的一键安装任务。
-- 中英文响应式管理界面、异步任务中心和高风险删除确认。
-- amd64/arm64 静态交叉构建、systemd 单元、随机高位端口和安装源备份/验证/回滚。
+## 功能概览
 
-## 本地构建
+| 模块 | 当前能力 |
+| --- | --- |
+| 主机监控 | CPU、负载、内存、Swap、磁盘、网络、进程、端口与运行时间；实时及分层历史指标 |
+| 服务检测 | 识别 Nginx、Apache、Docker Engine/Compose、certbot、acme.sh 的版本、状态与路径 |
+| Docker | 容器生命周期、镜像/网络/卷清单与受限操作、Compose 任务、鉴权终端 |
+| Web 服务 | Nginx/Apache 站点发现、原始指令保留、语法验证、原子写入、reload 失败回滚 |
+| 域名与证书 | 反向代理入口、DNS 检查、certbot/acme.sh、失败回滚与 IP 入口恢复 |
+| 告警 | SMTP、通用 Webhook、持续时间、恢复通知、静默期和重复通知 |
+| 安全 | 双进程权限边界、Argon2id、TOTP、CSRF、登录限速、会话撤销与完整审计 |
+| 安装与恢复 | 地区镜像探测、源备份/验证/回滚、随机端口、systemd 与离线恢复命令 |
 
-要求 Go 1.24+ 和 Node.js 22+：
+## 架构
 
-```bash
-make web
-make test
-make release VERSION=v0.1.0
+```mermaid
+flowchart LR
+    B["浏览器"] -->|"HTTP / HTTPS"| W["anpanel-web<br/>普通用户"]
+    W --> D["SQLite WAL"]
+    W -->|"固定 RPC + Token<br/>Unix Socket 0660"| A["anpanel-agent<br/>root"]
+    A --> S["systemd / 软件包"]
+    A --> X["Nginx / Apache"]
+    A --> K["Docker Socket"]
 ```
 
-输出位于 `dist/`。发布前必须给二进制生成 SHA-256；若使用 Ed25519 发布签名，将公钥文件路径通过 `ANPANEL_RELEASE_PUBLIC_KEY` 传给安装器。
+`anpanel-web` 负责 UI、认证、API、任务和审计；`anpanel-agent` 只接受白名单动作，不提供任意 Shell 接口。
 
-## 安装
+## 支持范围
 
-正式 Release 应上传以下同名资产：
+- 架构：Linux `amd64`、`arm64`
+- Ubuntu：18.04、20.04、22.04、24.04、26.04
+- Debian：10、11、12、13
+- CentOS：7
+- Rocky Linux / AlmaLinux：8、9、10
 
-- `anpanel-linux-amd64`、`anpanel-linux-arm64`
-- 对应的 `.sha256`
-- `install.sh`（由 `make installer` 生成的自包含版本）
+EOL 系统使用归档源只能维持软件包可获取性，不能恢复安全维护。安装器会保留已启用的扩展维护订阅和第三方仓库，并在缺少安全更新时给出持续警告。
+
+## 快速安装
+
+从 GitHub Release 安装最新版本：
 
 ```bash
 curl -fsSL https://github.com/anpanel/anpanel/releases/latest/download/install.sh | sudo bash
 ```
 
-可选参数：
+常用参数：
 
 ```bash
 sudo bash install.sh --region=cn
@@ -49,24 +60,69 @@ sudo bash install.sh --region=global --open-firewall
 sudo bash install.sh --version=v0.1.0
 ```
 
-安装完成后终端会显示随机端口和一次性的初始 `admin` 密码。首次登录必须修改用户名与密码。IP 模式按产品约定使用明文 HTTP，面板会持续显示风险提示。
+- `--region=cn|global`：覆盖自动地区判断。
+- `--open-firewall`：显式放行面板随机端口；默认不修改主机防火墙，也不会修改云安全组。
+- `--version`：安装指定 Release 标签。
 
-## 恢复命令
+安装完成后，终端会显示随机端口和一次性 `admin` 密码。密码不会写入普通日志，首次登录必须修改用户名与密码。未绑定域名时使用明文 HTTP，请仅在可信网络中初始化并尽快配置 HTTPS。
+
+## 本地开发与构建
+
+要求 Go 1.24+、Node.js 22+、GNU Make 和 Bash：
 
 ```bash
-anpanelctl show-port
-anpanelctl recover-access
-anpanelctl reset-admin
-anpanelctl disable-totp
+make web
+make test
+make release VERSION=v0.1.0
 ```
 
-`anpanelctl` 是指向同一 AnPanel 二进制的符号链接。
+发布产物位于 `dist/`：
 
-## 安全边界
+- `anpanel-linux-amd64`、`anpanel-linux-arm64`
+- 每个二进制对应的 `.sha256`
+- 自包含安装器 `install.sh`
 
-- Web 服务以 `anpanel` 普通用户运行，特权请求通过 `0660` Unix Socket 和随机 agent token 发往 root agent。
-- Web 配置只能写入 `/etc/nginx`、`/etc/apache2`、`/etc/httpd`；Compose 文件只允许位于 `/etc/anpanel/compose`、`/opt` 或 `/srv`。
-- 第三方 apt/yum 仓库不会被换源逻辑改写。旧系统的归档源只解决软件包可获取性，不代表仍有安全维护。
-- 删除 Docker 卷、容器等破坏性操作需要界面二次确认；agent 同时禁用默认强制删除。
+GitHub Actions 可以手动生成下载产物，也可以在推送 `v*` 标签时创建 Release。完整流程与签名配置见 [发布指南](docs/RELEASING.md)。
 
-接口约定和当前限制见 [docs/API.md](docs/API.md) 与 [docs/ROADMAP.md](docs/ROADMAP.md)。
+## 安装目录
+
+| 路径 | 用途 |
+| --- | --- |
+| `/usr/local/bin/anpanel` | 主程序 |
+| `/usr/local/bin/anpanelctl` | 恢复命令入口 |
+| `/etc/anpanel` | 配置、Token 与凭据 |
+| `/var/lib/anpanel` | SQLite 数据库、备份与任务数据 |
+| `/var/log/anpanel` | 运行日志 |
+| `/run/anpanel/agent.sock` | Web 与 agent 的受限 Unix Socket |
+
+## 恢复访问
+
+```bash
+sudo anpanelctl show-port
+sudo anpanelctl recover-access
+sudo anpanelctl reset-admin
+sudo anpanelctl disable-totp
+```
+
+`recover-access` 用于反向代理或域名配置故障后的本地入口恢复；`reset-admin` 会生成新的临时凭据。
+
+## 安全说明
+
+- Web 服务以 `anpanel` 普通用户运行，特权请求通过 Unix Socket 和独立 agent token 发送。
+- Compose 文件仅允许位于 `/etc/anpanel/compose`、`/opt` 或 `/srv`。
+- Web 配置变更先执行 `nginx -t` 或 `apachectl configtest`，失败时恢复上一版本。
+- 换源前创建完整备份，索引或缓存校验失败会自动回滚；Docker、EPEL、PPA 等用户仓库不会被改写。
+- 删除容器、镜像、网络和卷需要二次确认；底层动作默认不启用强制删除。
+- Release 始终提供 SHA-256；配置 Ed25519 密钥后还会发布二进制签名。
+
+发现安全问题时，请避免在公开 Issue 中披露凭据、服务器地址或可利用细节。
+
+## 文档
+
+- [API 与动作约定](docs/API.md)
+- [构建和发布](docs/RELEASING.md)
+- [路线图与验收状态](docs/ROADMAP.md)
+
+## 当前边界
+
+首版聚焦单服务器、单管理员场景，不包含多服务器集群、数据库/PHP 应用商店、完整文件管理器、宿主机 Web 终端或防火墙管理。尚未在完整发行版矩阵中验证的功能会明确记录在路线图中。
