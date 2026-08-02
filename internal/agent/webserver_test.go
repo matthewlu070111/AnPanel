@@ -2,6 +2,7 @@ package agent
 
 import (
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -41,5 +42,43 @@ func TestComposePathBoundary(t *testing.T) {
 	}
 	if _, err := safeComposePath("/srv/app/compose.yaml"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSiteStaticAndProxyConfig(t *testing.T) {
+	static := siteStaticConfig("nginx", "blog.example.com", "/var/www/blog.example.com", "", "")
+	if !strings.Contains(static, "server_name blog.example.com") || !strings.Contains(static, "root /var/www/blog.example.com") {
+		t.Fatalf("bad static config: %s", static)
+	}
+	proxy := siteProxyConfig("nginx", "app.example.com", "http://127.0.0.1:3000", "", "")
+	if !strings.Contains(proxy, "proxy_pass http://127.0.0.1:3000") {
+		t.Fatalf("bad proxy config: %s", proxy)
+	}
+	tls := siteProxyConfig("apache", "app.example.com", "http://127.0.0.1:3000/", "/c.pem", "/k.pem")
+	if !strings.Contains(tls, "SSLEngine on") || !strings.Contains(tls, "443") {
+		t.Fatalf("bad apache tls config: %s", tls)
+	}
+}
+
+func TestSafeWebRoot(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+		t.Skip("path policy")
+	}
+	// On Windows Abs may still work; policy checks absolute roots that are unix-style.
+	if runtime.GOOS != "linux" {
+		t.Skip("unix web root policy")
+	}
+	if _, err := safeWebRoot("/tmp/evil", "x.com"); err == nil {
+		t.Fatal("unsafe root accepted")
+	}
+	p, err := safeWebRoot("/var/www/x.com", "x.com")
+	if err != nil || p != "/var/www/x.com" {
+		t.Fatalf("got %q %v", p, err)
+	}
+}
+
+func TestDomainSlug(t *testing.T) {
+	if domainSlug("Blog.Example.COM") != "blog.example.com" {
+		t.Fatal(domainSlug("Blog.Example.COM"))
 	}
 }

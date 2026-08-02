@@ -29,17 +29,20 @@ func NewClient(cfg config.Config) (*Client, error) {
 	tr := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "unix", cfg.AgentSocket)
 	}}
+	// Short timeout for reads; Action uses a longer client below.
 	return &Client{http: &http.Client{Transport: tr, Timeout: 30 * time.Second}, token: string(bytes.TrimSpace(b)), socket: cfg.AgentSocket}, nil
 }
 func (c *Client) Get(ctx context.Context, path string, out any) error {
-	return c.do(ctx, "GET", path, nil, out)
+	return c.do(c.http, ctx, "GET", path, nil, out)
 }
 func (c *Client) Action(ctx context.Context, a ActionRequest) (ActionResult, error) {
 	var out ActionResult
-	err := c.do(ctx, "POST", "/v1/action", a, &out)
+	// Certificate issuance / renew / package install can take several minutes.
+	actionHTTP := &http.Client{Transport: c.http.Transport, Timeout: 12 * time.Minute}
+	err := c.do(actionHTTP, ctx, "POST", "/v1/action", a, &out)
 	return out, err
 }
-func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
+func (c *Client) do(cli *http.Client, ctx context.Context, method, path string, body, out any) error {
 	var r io.Reader
 	if body != nil {
 		b, _ := json.Marshal(body)
@@ -51,7 +54,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
+	resp, err := cli.Do(req)
 	if err != nil {
 		return err
 	}

@@ -64,6 +64,19 @@ func executeAction(ctx context.Context, a ActionRequest) (ActionResult, error) {
 			return validatedReload(ctx, "apache")
 		}
 		return ActionResult{}, errors.New("unknown web server")
+	case "web.site.create":
+		return createWebsite(ctx, a.Options)
+	case "web.site.delete":
+		server := a.Options["server"]
+		if server == "" {
+			server = "nginx"
+		}
+		return deleteWebsite(ctx, a.Resource, server)
+	case "cert.issue":
+		return issueSiteCertificate(ctx, a.Resource, a.Options["server"], a.Options["tool"], a.Options["email"])
+	case "cert.renew":
+		force := strings.EqualFold(a.Options["force"], "true") || a.Options["force"] == "1"
+		return renewCertificate(ctx, a.Resource, a.Options["tool"], force)
 	case "package.install":
 		return installPackage(ctx, a.Resource)
 	case "notification.configure":

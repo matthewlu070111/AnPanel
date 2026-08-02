@@ -1,3 +1,53 @@
-.alert-form{display:flex;flex-direction:column;gap:16px;margin-bottom:16px}.alert-form select{background:#0a1522;border:1px solid var(--line);color:#e9f2ff;border-radius:9px;padding:13px 14px}.alert-table{margin-top:16px}
-.domain-card{max-width:900px;margin-top:16px;display:grid;grid-template-columns:auto 1fr;gap:20px}.domain-card>svg{color:var(--teal);width:38px}.domain-card h2{margin:0 0 6px}.domain-card p{color:var(--muted);font-size:13px}.domain-form{grid-column:1/-1;display:grid;grid-template-columns:2fr 1fr 1fr 2fr;gap:12px}.domain-form select{background:#0a1522;border:1px solid var(--line);color:#e9f2ff;border-radius:9px;padding:13px 14px}.domain-form .card-actions{grid-column:1/-1}.domain-card>.success{grid-column:1/-1}@media(max-width:900px){.domain-form{grid-template-columns:1fr 1fr}}@media(max-width:600px){.domain-form{grid-template-columns:1fr}}
-.terminal-modal{width:min(900px,92vw);height:72vh}.terminal-modal pre{flex:1;margin:0;background:#030a11;color:#a8e8c8;border:1px solid #1b3040;border-radius:9px;padding:16px;overflow:auto;white-space:pre-wrap;font-size:12px}.terminal-modal form{display:flex;align-items:center;gap:10px;color:var(--teal);font-family:ui-monospace,monospace}.terminal-modal form input{flex:1;font-family:ui-monospace,monospace}
+.alert-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 0;
+}
+
+.alert-form select {
+  background: #fff;
+  border: 1px solid #dcdfe6;
+  color: var(--text);
+  border-radius: 4px;
+  padding: 10px 12px;
+}
+
+.alert-table {
+  margin-top: 14px;
+}
+
+.terminal-modal {
+  width: min(900px, 100%);
+  height: min(72vh, 640px);
+}
+
+.terminal-modal pre {
+  flex: 1;
+  margin: 0;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 12px 14px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 12px;
+  min-height: 0;
+}
+
+.terminal-modal form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--green);
+  font-family: ui-monospace, monospace;
+}
+
+.terminal-modal form input {
+  flex: 1;
+  font-family: ui-monospace, monospace;
+  background: #1e1e1e;
+  border-color: #444;
+  color: #d4d4d4;
+}

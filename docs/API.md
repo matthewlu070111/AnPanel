@@ -31,6 +31,7 @@
 | `GET /docker/inventory/{images,networks,volumes}` | Docker 对象清单 |
 | `GET /ws/docker/terminal` | 受限容器终端 WebSocket |
 | `GET /websites` | Nginx/Apache 虚拟主机及未识别原始配置块 |
+| `GET /certificates` | 证书列表（Let’s Encrypt / AnPanel / acme.sh），含到期天数 |
 | `POST /actions` | 创建异步系统任务 |
 | `GET /tasks` | 查询任务及脱敏结果 |
 | `GET /audits` | 查询操作审计记录 |
@@ -72,6 +73,10 @@ agent 当前允许的动作如下。除此之外的 `kind` 会被拒绝。
 | `service.start/stop/restart` | 白名单 systemd 服务名 | 限 Nginx、Apache、Docker 和 AnPanel 服务 |
 | `web.apply` | 受管配置文件路径 | 内容放在 `options.content`，应用前验证并支持回滚 |
 | `web.reload` | `nginx` 或 `apache` | 验证配置后 reload |
+| `web.site.create` | 域名 | `options`: `domain`、`server`、`site_type`(`static`\|`proxy`)、`root`、`proxy_pass`、`enable_ssl`、`tool`、`email` |
+| `web.site.delete` | 域名 | 仅删除 `anpanel-site-*` 托管配置；`options.server` |
+| `cert.issue` | 域名 | 为已有站点申请证书；`options.server/tool/email` |
+| `cert.renew` | 域名（空=全部 certbot） | 续期；`options.tool`、`options.force` |
 | `package.install` | `nginx`、`apache`、`docker` 或 `certbot` | 受兼容目录和仓库状态限制 |
 | `notification.configure` | 配置标识 | JSON 放在 `options.json`，凭据文件权限为 `0600` |
 | `panel.bind_domain` | 面板入口 | 使用 `options.domain/server/tool/email` |

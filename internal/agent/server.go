@@ -52,6 +52,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	mux.HandleFunc("/v1/services", s.auth(s.services))
 	mux.HandleFunc("/v1/docker/containers", s.auth(s.containers))
 	mux.HandleFunc("/v1/websites", s.auth(s.websites))
+	mux.HandleFunc("/v1/certificates", s.auth(s.certificates))
 	mux.HandleFunc("/v1/action", s.auth(s.action))
 	mux.HandleFunc("/v1/docker/inventory/", s.auth(s.inventory))
 	mux.HandleFunc("/v1/docker/terminal", s.auth(s.terminal))
@@ -122,6 +123,14 @@ func (s *server) inventory(w http.ResponseWriter, r *http.Request) {
 }
 func (s *server) websites(w http.ResponseWriter, r *http.Request) {
 	items, err := discoverWebsites()
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	jsonOut(w, items)
+}
+func (s *server) certificates(w http.ResponseWriter, r *http.Request) {
+	items, err := discoverCertificates()
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return

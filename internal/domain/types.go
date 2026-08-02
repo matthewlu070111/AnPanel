@@ -18,8 +18,12 @@ type HostSnapshot struct {
 }
 
 type DetectedService struct {
-	Name, Version, Path, Status, ConfigPath string
-	Installed                               bool
+	Name       string `json:"name"`
+	Version    string `json:"version"`
+	Path       string `json:"path"`
+	Status     string `json:"status"`
+	ConfigPath string `json:"config_path"`
+	Installed  bool   `json:"installed"`
 }
 
 type Container struct {
@@ -46,16 +50,26 @@ type WebSite struct {
 }
 
 type Certificate struct {
-	Domain, Issuer, Path string
-	ExpiresAt            time.Time
+	Domain    string    `json:"domain"`
+	Issuer    string    `json:"issuer"`
+	Path      string    `json:"path"`
+	KeyPath   string    `json:"key_path,omitempty"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Source    string    `json:"source"`
+	AutoRenew bool      `json:"auto_renew"`
+	DaysLeft  int       `json:"days_left"`
 }
 
 type AlertRule struct {
-	ID                                             int64 `json:"id"`
-	Name, Metric, Operator                         string
-	Threshold                                      float64
-	DurationSeconds, SilenceSeconds, RepeatSeconds int
-	Enabled                                        bool
+	ID              int64   `json:"id"`
+	Name            string  `json:"name"`
+	Metric          string  `json:"metric"`
+	Operator        string  `json:"operator"`
+	Threshold       float64 `json:"threshold"`
+	DurationSeconds int     `json:"duration_seconds"`
+	SilenceSeconds  int     `json:"silence_seconds"`
+	RepeatSeconds   int     `json:"repeat_seconds"`
+	Enabled         bool    `json:"enabled"`
 }
 
 type Task struct {
@@ -69,7 +83,11 @@ type Task struct {
 }
 
 type AuditEvent struct {
-	ID                                        int64 `json:"id"`
-	Actor, Action, Resource, Detail, RemoteIP string
-	CreatedAt                                 time.Time `json:"created_at"`
+	ID        int64     `json:"id"`
+	Actor     string    `json:"actor"`
+	Action    string    `json:"action"`
+	Resource  string    `json:"resource"`
+	Detail    string    `json:"detail"`
+	RemoteIP  string    `json:"remote_ip"`
+	CreatedAt time.Time `json:"created_at"`
 }

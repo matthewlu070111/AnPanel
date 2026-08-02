@@ -83,6 +83,7 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/docker/containers", s.withSession(s.proxyGet("/v1/docker/containers"), false))
 	mux.HandleFunc("/api/v1/docker/inventory/", s.withSession(s.proxyInventory, false))
 	mux.HandleFunc("/api/v1/websites", s.withSession(s.proxyGet("/v1/websites"), false))
+	mux.HandleFunc("/api/v1/certificates", s.withSession(s.proxyGet("/v1/certificates"), false))
 	mux.HandleFunc("/api/v1/tasks", s.withSession(s.tasks, false))
 	mux.HandleFunc("/api/v1/audits", s.withSession(s.audits, false))
 	mux.HandleFunc("/api/v1/alerts/rules", s.withSession(s.alertRules, false))
@@ -456,6 +457,20 @@ func (s *server) dockerTerminalWS(w http.ResponseWriter, r *http.Request) {
 	wrapped(w, r)
 }
 func (s *server) collect(ctx context.Context) {
+	collectOnce := func() {
+		m, err := s.agent.Snapshot(ctx)
+		if err != nil {
+			s.log.Debug("metrics collect failed", "error", err)
+			return
+		}
+		s.latestMu.Lock()
+		s.latest = m
+		s.latestMu.Unlock()
+		_ = s.db.SaveMetric(m)
+		s.evaluateAlerts(m)
+	}
+	// Collect immediately so the dashboard is not empty until the first tick.
+	collectOnce()
 	ticker := time.NewTicker(time.Duration(s.cfg.MetricsInterval) * time.Second)
 	defer ticker.Stop()
 	prune := time.NewTicker(24 * time.Hour)
@@ -465,14 +480,7 @@ func (s *server) collect(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			m, err := s.agent.Snapshot(ctx)
-			if err == nil {
-				s.latestMu.Lock()
-				s.latest = m
-				s.latestMu.Unlock()
-				_ = s.db.SaveMetric(m)
-				s.evaluateAlerts(m)
-			}
+			collectOnce()
 		case <-prune.C:
 			_ = s.db.PruneMetrics()
 		}
