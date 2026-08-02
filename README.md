@@ -82,7 +82,7 @@ make release VERSION=v0.1.0
 - 每个二进制对应的 `.sha256`
 - 自包含安装器 `install.sh`
 
-GitHub Actions 可以手动生成下载产物，也可以在推送 `v*` 标签时创建 Release。完整流程与签名配置见 [发布指南](docs/RELEASING.md)。
+GitHub Actions 会在 `ci` 成功后创建 `build-{commit_id}` prerelease；如果该提交带有 `v*` 标签，则创建正式 Release。也可以手动运行工作流。完整流程与签名配置见 [发布指南](docs/RELEASING.md)。
 
 ## 安装目录
 

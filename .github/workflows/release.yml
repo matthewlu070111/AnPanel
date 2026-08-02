@@ -4,12 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Build version (for example v0.1.0; optional for artifact builds)
+        description: Release version; leave empty for build-{commit_id} prerelease
         required: false
         type: string
-  push:
-    tags:
-      - 'v*'
+  workflow_run:
+    workflows:
+      - ci
+    types:
+      - completed
 
 concurrency:
   group: build-release-${{ github.ref }}
@@ -21,6 +23,10 @@ permissions:
 jobs:
   build:
     name: Build Linux release
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -28,6 +34,9 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -47,19 +56,31 @@ jobs:
         shell: bash
         env:
           INPUT_VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            version="$GITHUB_REF_NAME"
-          elif [[ -n "$INPUT_VERSION" ]]; then
+          prerelease=false
+          verified_tag=false
+          if [[ -n "$INPUT_VERSION" ]]; then
             version="$INPUT_VERSION"
+          elif [[ "$GITHUB_EVENT_NAME" == workflow_run ]]; then
+            version=$(git tag --points-at "$SOURCE_SHA" --list 'v*' | sort -V | tail -n 1)
+            if [[ -n "$version" ]]; then
+              verified_tag=true
+            else
+              version="build-${SOURCE_SHA::7}"
+              prerelease=true
+            fi
           else
-            version="dev-${GITHUB_SHA::7}"
+            version="build-${SOURCE_SHA::7}"
+            prerelease=true
           fi
           if [[ ! "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$ ]]; then
             echo "Invalid version: $version" >&2
             exit 1
           fi
           echo "value=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "verified_tag=$verified_tag" >> "$GITHUB_OUTPUT"
 
       - name: Install web dependencies
         working-directory: web
@@ -128,11 +149,13 @@ jobs:
           retention-days: 14
 
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.value }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+          VERIFIED_TAG: ${{ steps.version.outputs.verified_tag }}
         run: |
           assets=(
             dist/anpanel-linux-amd64
@@ -147,9 +170,20 @@ jobs:
           done
           if gh release view "$VERSION" >/dev/null 2>&1; then
             gh release upload "$VERSION" "${assets[@]}" --clobber
-          else
+          elif [[ "$VERIFIED_TAG" == true ]]; then
             gh release create "$VERSION" "${assets[@]}" \
               --title "AnPanel $VERSION" \
               --generate-notes \
               --verify-tag
+          elif [[ "$PRERELEASE" == true ]]; then
+            gh release create "$VERSION" "${assets[@]}" \
+              --title "AnPanel $VERSION" \
+              --generate-notes \
+              --target "$SOURCE_SHA" \
+              --prerelease
+          else
+            gh release create "$VERSION" "${assets[@]}" \
+              --title "AnPanel $VERSION" \
+              --generate-notes \
+              --target "$SOURCE_SHA"
           fi

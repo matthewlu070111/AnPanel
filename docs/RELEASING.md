@@ -3,9 +3,13 @@
 仓库包含两条 GitHub Actions 工作流：
 
 - `ci.yml`：在 push 和 pull request 上执行前端构建、Go 测试与 Linux 交叉编译检查。
-- `release.yml`：手动运行时上传构建产物；推送 `v*` 标签时同时创建 GitHub Release。
+- `release.yml`：成功完成 `ci` 后自动构建并发布，也支持手动运行。
 
-## 手动构建产物
+自动发布只接收成功的 `push` CI，不接收 pull request CI。普通提交会生成 `build-{commit_id}` prerelease；如果该提交带有 `v*` 标签，则生成对应的正式 Release。
+
+GitHub 要求使用 `workflow_run` 的工作流文件已经存在于默认分支，因此首次启用时需要先将 `release.yml` 合并到默认分支。
+
+## 手动运行
 
 在 GitHub 仓库中打开 **Actions → build-release → Run workflow**。`version` 可以留空，此时版本号为 `dev-<commit>`；也可以填写符合以下规则的版本：
 
@@ -14,18 +18,18 @@ v0.1.0
 v0.1.0-rc.1
 ```
 
-完成后可在该次运行的 **Artifacts** 区域下载 `amd64`、`arm64` 二进制、自包含安装器和 SHA-256 文件。手动运行不会创建 Release。
+未填写 `version` 时，工作流使用当前提交的前七位 ID 创建 `build-{commit_id}` prerelease，例如 `build-a1b2c3d`。填写版本时会以该名称创建普通 Release。两种方式都会在该次运行的 **Artifacts** 区域保留构建文件。
 
 ## 创建正式 Release
 
-确认默认分支 CI 通过后创建并推送标签：
+创建并推送标签：
 
 ```bash
 git tag -a v0.1.0 -m "AnPanel v0.1.0"
 git push origin v0.1.0
 ```
 
-工作流会：
+标签 push 首先运行 `ci.yml`。只有 CI 成功，`release.yml` 才会识别指向该提交的 `v*` 标签并创建正式 Release。工作流会：
 
 1. 安装锁定的前端依赖并运行 lint/build。
 2. 运行 `go vet`、`go test` 和安装脚本语法检查。
