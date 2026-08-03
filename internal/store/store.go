@@ -243,6 +243,17 @@ func (s *Store) UpdateTask(id, status, log string, result any) error {
 	_, err := s.db.Exec("UPDATE tasks SET status=?,log=?,result=?,updated_at=? WHERE id=?", status, log, string(b), time.Now().Unix(), id)
 	return err
 }
+
+// RecoverInterruptedTasks closes tasks left running when the web service restarted.
+// A self-update restart is the success signal; other interrupted work must be retried.
+func (s *Store) RecoverInterruptedTasks() error {
+	now := time.Now().Unix()
+	if _, err := s.db.Exec("UPDATE tasks SET status='succeeded',log=CASE WHEN log='' THEN 'AnPanel restarted successfully after update.' ELSE log END,updated_at=? WHERE status='running' AND kind='panel.self_update'", now); err != nil {
+		return err
+	}
+	_, err := s.db.Exec("UPDATE tasks SET status='failed',log=CASE WHEN log='' THEN 'Task interrupted by service restart.' ELSE log END,updated_at=? WHERE status='running'", now)
+	return err
+}
 func (s *Store) Tasks(limit int) ([]domain.Task, error) {
 	if limit < 1 || limit > 500 {
 		limit = 100

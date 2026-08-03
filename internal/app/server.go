@@ -52,6 +52,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return fmt.Errorf("connect agent: %w", err)
 	}
 	s := &server{cfg: cfg, db: db, agent: ac, log: logger, attempts: newLoginLimiter(), alertStates: map[int64]*alertState{}}
+	_ = db.RecoverInterruptedTasks()
 	mux := http.NewServeMux()
 	s.routes(mux)
 	// Entry path gate wraps all traffic when configured (decoy on bare host access).
@@ -83,6 +84,7 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/metrics/history", s.withSession(s.metricsHistory, false))
 	mux.HandleFunc("/api/v1/ws/metrics", s.metricsWS)
 	mux.HandleFunc("/api/v1/ws/docker/terminal", s.dockerTerminalWS)
+	mux.HandleFunc("/api/v1/ws/host/terminal", s.hostTerminalWS)
 	mux.HandleFunc("/api/v1/services", s.withSession(s.proxyGet("/v1/services"), false))
 	mux.HandleFunc("/api/v1/docker/containers", s.withSession(s.proxyGet("/v1/docker/containers"), false))
 	mux.HandleFunc("/api/v1/docker/inventory/", s.withSession(s.proxyInventory, false))
@@ -101,6 +103,7 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/alerts/test", s.withSession(s.testNotification, true))
 	mux.HandleFunc("/api/v1/actions", s.withSession(s.action, true))
 	mux.HandleFunc("/api/v1/settings/entry", s.withSession(s.saveEntrySettings, true))
+	mux.HandleFunc("/api/v1/settings/local-ip", s.withSession(s.localIPSettings, false))
 	dist, _ := fs.Sub(webui.Dist, "dist")
 	files := http.FileServer(http.FS(dist))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -340,7 +343,11 @@ func (s *server) proxyInventory(w http.ResponseWriter, r *http.Request) {
 	apiJSON(w, out)
 }
 func (s *server) tasks(w http.ResponseWriter, r *http.Request) {
-	items, err := s.db.Tasks(100)
+	limit := 10
+	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v >= 1 && v <= 100 {
+		limit = v
+	}
+	items, err := s.db.Tasks(limit)
 	if err != nil {
 		apiError(w, 500, err.Error())
 		return
@@ -509,6 +516,92 @@ func (s *server) dockerTerminalWS(w http.ResponseWriter, r *http.Request) {
 		<-done
 	}, false)
 	wrapped(w, r)
+}
+
+func (s *server) hostTerminalWS(w http.ResponseWriter, r *http.Request) {
+	wrapped := s.withSession(func(w http.ResponseWriter, r *http.Request) {
+		agentConn, err := s.agent.DialHostTerminal(r.Context())
+		if err != nil {
+			apiError(w, 502, err.Error())
+			return
+		}
+		defer agentConn.Close()
+		browser, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer browser.Close()
+		done := make(chan struct{}, 2)
+		relay := func(dst, src *websocket.Conn) {
+			defer func() { done <- struct{}{} }()
+			for {
+				kind, msg, err := src.ReadMessage()
+				if err != nil || dst.WriteMessage(kind, msg) != nil {
+					return
+				}
+			}
+		}
+		go relay(agentConn, browser)
+		go relay(browser, agentConn)
+		<-done
+	}, false)
+	wrapped(w, r)
+}
+
+func detectedLocalIPv4() string {
+	ifaces, _ := net.Interfaces()
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, _ := iface.Addrs()
+		for _, addr := range addrs {
+			ip, _, err := net.ParseCIDR(addr.String())
+			if err == nil && ip.To4() != nil && !ip.IsLoopback() {
+				return ip.String()
+			}
+		}
+	}
+	return "127.0.0.1"
+}
+
+func (s *server) localIPSettings(w http.ResponseWriter, r *http.Request) {
+	detected := detectedLocalIPv4()
+	selected, err := s.db.Setting("local_ip")
+	if err != nil || net.ParseIP(selected) == nil {
+		selected = detected
+	}
+	if r.Method == http.MethodGet {
+		apiJSON(w, map[string]string{"detected_ip": detected, "local_ip": selected})
+		return
+	}
+	if r.Method != http.MethodPost {
+		apiError(w, 405, "method not allowed")
+		return
+	}
+	ss := current(r)
+	if r.Header.Get("X-CSRF-Token") != ss.CSRF {
+		apiError(w, 403, "invalid CSRF token")
+		return
+	}
+	var in struct {
+		LocalIP string `json:"local_ip"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	ip := net.ParseIP(strings.TrimSpace(in.LocalIP))
+	if ip == nil || ip.To4() == nil || ip.IsUnspecified() || ip.IsMulticast() {
+		apiError(w, 400, "invalid IPv4 address")
+		return
+	}
+	selected = ip.String()
+	if err := s.db.SetSetting("local_ip", selected); err != nil {
+		apiError(w, 500, err.Error())
+		return
+	}
+	_ = s.db.Audit(ss.User.Username, "settings.local_ip", selected, "", remoteIP(r))
+	apiJSON(w, map[string]string{"detected_ip": detected, "local_ip": selected})
 }
 func (s *server) collect(ctx context.Context) {
 	collectOnce := func() {

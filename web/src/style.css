@@ -74,6 +74,8 @@ a {
   height: 20px;
 }
 
+.brandmark img { width: 100%; height: 100%; display: block; }
+
 .brand {
   display: flex;
   align-items: center;
@@ -363,7 +365,9 @@ nav button.active {
   max-height: 100%;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .page-body {
@@ -373,7 +377,7 @@ nav button.active {
   margin: 0 auto;
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow: visible;
 }
 
 header.page-head {
@@ -1211,6 +1215,23 @@ textarea {
   border: 1px solid #ebeef5;
 }
 
+.task-detail-link {
+  align-self: flex-start;
+  margin-top: 6px;
+  padding: 0;
+  color: var(--green-dark);
+  background: transparent;
+  border: 0;
+  font-size: 12px;
+}
+.task-detail-link:hover { text-decoration: underline; }
+.task-detail-modal { width: min(760px, 100%); }
+.task-detail-modal h3 { margin: 2px 0 0; font-size: 13px; }
+.task-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 0; }
+.task-meta > div { padding: 10px 12px; background: #f7f8fa; border-radius: 6px; }
+.task-meta dt { color: var(--muted); font-size: 11px; }
+.task-meta dd { margin: 2px 0 0; font-size: 13px; }
+
 .task-dot {
   width: 8px;
   height: 8px;
@@ -1531,13 +1552,20 @@ textarea {
 
 /* —— Security settings —— */
 .security-settings {
-  max-width: 780px;
+  width: 100%;
   overflow: hidden;
   background: #fff;
   border: 1px solid var(--line);
   border-radius: 8px;
   box-shadow: var(--shadow);
 }
+
+.settings-stack { display: grid; gap: 14px; max-width: 780px; }
+.settings-card { display: grid; gap: 14px; width: 100%; max-width: none !important; }
+.settings-card-head { display: flex; gap: 14px; align-items: center; margin-bottom: 2px; }
+.settings-card-head h2 { margin: 0 0 3px !important; font-size: 16px !important; }
+.settings-card-head p { margin: 0 !important; color: var(--muted); font-size: 12px !important; }
+.settings-card label small { display: block; margin-top: 5px; color: var(--muted); font-weight: 400; }
 
 .security-head {
   display: grid;
@@ -1608,6 +1636,11 @@ textarea {
   padding-left: 34px;
 }
 
+.view-toggle { display: inline-flex; gap: 3px; padding: 3px; background: #f3f5f7; border-radius: 6px; }
+.view-toggle button { width: 32px; height: 30px; display: grid; place-items: center; color: var(--muted); background: transparent; border: 0; border-radius: 4px; }
+.view-toggle button.active { color: var(--green-dark); background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+.view-toggle svg, .service-card .card-actions svg { width: 14px; height: 14px; }
+
 .market-section {
   margin-bottom: 24px;
 }
@@ -1631,6 +1664,14 @@ textarea {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
+.app-grid.one-column { grid-template-columns: 1fr; }
+.app-grid.one-column .service-card { grid-template-columns: minmax(240px, 1fr) auto minmax(220px, 1fr) auto; align-items: center; }
+.app-grid.one-column .service-card .docker-app-hint,
+.app-grid.one-column .service-card > p { grid-column: 3; }
+.app-grid.one-column .service-card .card-actions { grid-column: 4; flex-wrap: nowrap; justify-content: flex-end; }
+
+.ssh-page { display: flex; }
+.host-terminal { display: flex; flex-direction: column; width: 100%; height: min(72vh, 720px); border: 1px solid #30343d; border-radius: 8px; overflow: hidden; }
 
 .app-grid .service-card {
   border-radius: 6px;
@@ -1741,4 +1782,9 @@ textarea {
     flex-direction: column;
   }
   .totp-verify input { width: 100%; }
+  .app-grid.one-column .service-card { grid-template-columns: 1fr auto; }
+  .app-grid.one-column .service-card > p,
+  .app-grid.one-column .service-card .docker-app-hint,
+  .app-grid.one-column .service-card .card-actions { grid-column: 1 / -1; }
+  .task-meta { grid-template-columns: 1fr; }
 }

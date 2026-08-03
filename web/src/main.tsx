@@ -8,6 +8,7 @@ import {
   Play, Square, RotateCw, Trash2, Terminal, LockKeyhole, Languages, BellRing,
   Cpu, HardDrive, Database, Plus, FileKey2, FolderOpen, FileText, ChevronUp,
   Pencil, Download, Search, Home, ChevronRight, ShieldCheck, CheckCircle2,
+  KeyRound, Grid3X3, Rows3, Link2, Network,
 } from 'lucide-react'
 import {api, post, setCSRF} from './api'
 import {I18n, Lang, translator, useI18n} from './i18n'
@@ -18,9 +19,9 @@ import type {
 import './style.css'
 import './alerts.css'
 
-type Page = 'dashboard' | 'docker' | 'websites' | 'files' | 'services' | 'tasks' | 'alerts' | 'settings'
+type Page = 'dashboard' | 'docker' | 'ssh' | 'websites' | 'files' | 'services' | 'tasks' | 'alerts' | 'settings'
 
-const pagePaths: Record<Page, string> = {dashboard: '/', docker: '/docker', websites: '/website', files: '/files', services: '/apps', tasks: '/tasks', alerts: '/alerts', settings: '/settings'}
+const pagePaths: Record<Page, string> = {dashboard: '/', docker: '/docker', ssh: '/ssh', websites: '/website', files: '/files', services: '/apps', tasks: '/tasks', alerts: '/alerts', settings: '/settings'}
 function pageFromPath(path: string): Page {
   return (Object.entries(pagePaths).find(([, value]) => value === path)?.[0] as Page) || 'dashboard'
 }
@@ -30,6 +31,10 @@ function cached<T>(key: string, fallback: T): T {
 }
 function cache(key: string, value: unknown) {
   try { sessionStorage.setItem(key, JSON.stringify(value)) } catch { /* storage unavailable */ }
+}
+
+function BrandMark() {
+  return <span className="brandmark"><img src="/favicon.svg" alt="" /></span>
 }
 
 function App() {
@@ -42,7 +47,7 @@ function App() {
   }, [])
   useEffect(() => { localStorage.lang = lang }, [lang])
   const value = useMemo(() => ({lang, setLang, t: translator(lang)}), [lang])
-  if (loading) return <div className="splash"><div className="brandmark"><Activity /></div></div>
+  if (loading) return <div className="splash"><BrandMark /></div>
   return <I18n.Provider value={value}>{me ? <Shell me={me} setMe={setMe} /> : <Login setMe={setMe} />}</I18n.Provider>
 }
 
@@ -61,7 +66,7 @@ function Login({setMe}: {setMe: (m: Me) => void}) {
     <main className="login">
       <form className="login-card" onSubmit={submit}>
         <button type="button" className="lang" onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')}><Languages size={16} />{t('language')}</button>
-        <div className="brand"><span className="brandmark"><Activity /></span>AnPanel</div>
+        <div className="brand"><BrandMark />AnPanel</div>
         <h2>{t('loginTitle')}</h2>
         <p className="subtitle">{t('loginSubtitle')}</p>
         <label>{t('username')}<input value={username} onChange={e => setUser(e.target.value)} autoComplete="username" /></label>
@@ -74,9 +79,10 @@ function Login({setMe}: {setMe: (m: Me) => void}) {
   )
 }
 
-const nav: [Page, React.ElementType, 'dashboard' | 'docker' | 'websites' | 'files' | 'services' | 'tasks' | 'alerts' | 'settings'][] = [
+const nav: [Page, React.ElementType, 'dashboard' | 'docker' | 'ssh' | 'websites' | 'files' | 'services' | 'tasks' | 'alerts' | 'settings'][] = [
   ['dashboard', Activity, 'dashboard'],
   ['docker', Box, 'docker'],
+  ['ssh', KeyRound, 'ssh'],
   ['websites', Globe2, 'websites'],
   ['files', FolderOpen, 'files'],
   ['services', ServerCog, 'services'],
@@ -94,7 +100,7 @@ function Shell({me, setMe}: {me: Me; setMe: (m: Me | null) => void}) {
   return (
     <div className="shell">
       <aside>
-        <div className="brand"><span className="brandmark"><Activity /></span><span>AnPanel</span></div>
+        <div className="brand"><BrandMark /><span>AnPanel</span></div>
         <nav>
           {nav.map(([id, Icon, label]) => (
             <button key={id} className={page === id ? 'active' : ''} onClick={() => navigate(id)}>
@@ -113,6 +119,7 @@ function Shell({me, setMe}: {me: Me; setMe: (m: Me | null) => void}) {
         {!me.must_change && me.must_set_entry && <ForceEntrySetup me={me} setMe={setMe} />}
         {page === 'dashboard' && <Dashboard goSettings={() => navigate('settings')} />}
         {page === 'docker' && <DockerPage />}
+        {page === 'ssh' && <HostSSH />}
         {page === 'websites' && <Websites />}
         {page === 'files' && <FilesPage />}
         {page === 'services' && <Services />}
@@ -385,6 +392,36 @@ function ContainerTerminal({container, onClose}: {container: Container; onClose:
       <small className="terminal-hint">{t('terminalHint')}</small>
     </div></div>
   )
+}
+
+function HostSSH() {
+  const {t} = useI18n()
+  const [connected, setConnected] = useState(false)
+  const host = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!host.current) return
+    const terminal = new XTerm({cursorBlink: true, convertEol: true, fontFamily: '"Cascadia Mono", Consolas, monospace', fontSize: 13, scrollback: 10000, theme: {background: '#15171c', foreground: '#d4d4d4', cursor: '#67c77a', selectionBackground: '#3b82f655'}})
+    const fit = new FitAddon()
+    terminal.loadAddon(fit); terminal.open(host.current); fit.fit()
+    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/v1/ws/host/terminal`)
+    ws.binaryType = 'arraybuffer'
+    ws.onopen = () => { setConnected(true); terminal.focus() }
+    ws.onmessage = e => terminal.write(typeof e.data === 'string' ? e.data : new Uint8Array(e.data))
+    ws.onclose = () => { setConnected(false); terminal.writeln(`\r\n[${t('connectionClosed')}]`) }
+    const input = terminal.onData(data => { if (ws.readyState === WebSocket.OPEN) ws.send(data) })
+    const resize = new ResizeObserver(() => fit.fit()); resize.observe(host.current)
+    return () => { resize.disconnect(); input.dispose(); ws.close(); terminal.dispose() }
+  }, [t])
+  return <>
+    <PageHead title={t('ssh')} hint={t('sshHint')} />
+    <div className="page-body ssh-page">
+      <div className="terminal-modal host-terminal">
+        <div className="terminal-head"><span className="terminal-dots"><i className="dot-close" /><i className="dot-min" /><i className="dot-max" /></span><strong>root@localhost</strong><em className={connected ? 'online' : ''}>{connected ? t('connected') : t('connecting')}</em></div>
+        <div ref={host} className="terminal-screen" />
+        <small className="terminal-hint">{t('sshSecurityHint')}</small>
+      </div>
+    </div>
+  </>
 }
 
 /* —— Websites (BT-style) —— */
@@ -901,7 +938,9 @@ function Services() {
   const [items, setItems] = useState<Service[]>(() => cached<Service[]>('services', [])), [error, setError] = useState(''), [message, setMessage] = useState('')
   const [installDlg, setInstallDlg] = useState<Service | null>(null)
   const [progress, setProgress] = useState<{title: string; taskId: string} | null>(null)
+  const [bindDlg, setBindDlg] = useState<Service | null>(null)
   const [query, setQuery] = useState('')
+  const [view, setView] = useState<'grid' | 'list'>(() => (localStorage.appView === 'list' ? 'list' : 'grid'))
   const load = () => api<Service[]>('/services').then(v => { const next = Array.isArray(v) ? v : []; setItems(next); cache('services', next); setError('') }).catch(e => setError(e.message))
   useEffect(() => { void load() }, [])
   async function act(s: Service, verb: string) {
@@ -939,10 +978,14 @@ function Services() {
         {message && <div className="success" style={{marginBottom: 12}}>{message}</div>}
         <div className="market-tools">
           <div className="market-search"><Search /><input value={query} onChange={e => setQuery(e.target.value)} placeholder={t('searchApps')} /></div>
+          <div className="view-toggle" aria-label={t('displayMode')}>
+            <button className={view === 'grid' ? 'active' : ''} title={t('threeColumns')} onClick={() => { setView('grid'); localStorage.appView = 'grid' }}><Grid3X3 /></button>
+            <button className={view === 'list' ? 'active' : ''} title={t('oneColumn')} onClick={() => { setView('list'); localStorage.appView = 'list' }}><Rows3 /></button>
+          </div>
         </div>
         <section className="market-section">
           <h2>{t('systemApps')}<small>{t('systemAppsHint')}</small></h2>
-          <div className="app-grid">
+          <div className={`app-grid ${view === 'list' ? 'one-column' : ''}`}>
             {systemApps.map(s => (
                   <div className={`panel service-card ${s.name === 'docker' ? 'docker-app' : ''}`} key={s.name}>
                     <div className="resource">
@@ -966,6 +1009,7 @@ function Services() {
                         </>
                       )}
                       {s.can_update && <button className="btn" onClick={() => doUpdate(s)}>{t('updateSoft')}</button>}
+                      {s.installed && s.deploy === 'docker' && s.host_port && s.name !== 'php' && <button className="btn" onClick={() => setBindDlg(s)}><Link2 />{t('bindWeb')}</button>}
                       {!s.installed && (s.can_install || s.block_reason) && (
                         <button className="primary" onClick={() => openInstall(s)}>{s.deploy === 'docker' ? t('deployDockerApp') : t('installSoft')}</button>
                       )}
@@ -986,6 +1030,7 @@ function Services() {
             }}
           />
         )}
+        {bindDlg && <DockerWebDialog service={bindDlg} onClose={() => setBindDlg(null)} onQueued={() => { setBindDlg(null); setMessage(t('webBindQueued')) }} />}
         {progress && (
           <TaskProgressModal
             title={progress.title}
@@ -996,6 +1041,29 @@ function Services() {
       </div>
     </>
   )
+}
+
+function DockerWebDialog({service, onClose, onQueued}: {service: Service; onClose: () => void; onQueued: () => void}) {
+  const {t} = useI18n()
+  const [domain, setDomain] = useState(''), [ssl, setSSL] = useState(true), [email, setEmail] = useState('')
+  const [busy, setBusy] = useState(false), [error, setError] = useState('')
+  async function submit() {
+    setBusy(true); setError('')
+    try {
+      await post('/actions', {kind: 'web.site.create', resource: domain, options: {domain, site_type: 'proxy', proxy_pass: `http://127.0.0.1:${service.host_port}`, enable_ssl: ssl ? 'true' : 'false', email, tool: 'certbot'}})
+      onQueued()
+    } catch (e) { setError((e as Error).message); setBusy(false) }
+  }
+  return <div className="modal-back"><div className="modal">
+    <button className="close" onClick={onClose}>×</button>
+    <h2>{t('bindWeb')} · {service.display_name || service.name}</h2>
+    <p className="form-hint">{t('bindWebHint')} <code>127.0.0.1:{service.host_port}</code></p>
+    <label>{t('domainLabel')}<input value={domain} onChange={e => setDomain(e.target.value)} placeholder="app.example.com" /></label>
+    <label className="check-row"><input type="checkbox" checked={ssl} onChange={e => setSSL(e.target.checked)} />{t('enableSSL')}</label>
+    {ssl && <label>{t('email')}<input type="email" value={email} onChange={e => setEmail(e.target.value)} /></label>}
+    {error && <div className="error">{error}</div>}
+    <div className="card-actions"><button className="btn" onClick={onClose}>{t('cancel')}</button><button className="primary" disabled={busy || !domain.includes('.')} onClick={submit}>{busy ? '…' : t('bindWeb')}</button></div>
+  </div></div>
 }
 
 function InstallDialog({service, onClose, onQueued}: {service: Service; onClose: () => void; onQueued: (taskId: string, title: string) => void}) {
@@ -1073,7 +1141,7 @@ function TaskProgressModal({title, taskId, onClose}: {title: string; taskId: str
     let stop = false
     const tick = async () => {
       try {
-        const list = await api<Task[]>('/tasks')
+        const list = await api<Task[]>('/tasks?limit=100')
         const hit = (Array.isArray(list) ? list : []).find(x => x.id === taskId)
         if (hit && !stop) setTask(hit)
         if (hit && (hit.status === 'succeeded' || hit.status === 'failed' || hit.status === 'rolled_back')) return
@@ -1114,6 +1182,7 @@ function Tasks() {
   const {t, lang} = useI18n()
   const [tab, setTab] = useState<'tasks' | 'cron'>('tasks')
   const [tasks, setTasks] = useState<Task[]>([]), [audits, setAudits] = useState<Audit[]>([]), [crons, setCrons] = useState<CronJob[]>([])
+  const [taskDetail, setTaskDetail] = useState<Task | null>(null)
   const [schedule, setSchedule] = useState('0 3 * * *'), [command, setCommand] = useState(''), [message, setMessage] = useState(''), [error, setError] = useState('')
   const [cronMode, setCronMode] = useState<'simple' | 'advanced'>('simple')
   const [cronUnit, setCronUnit] = useState<'minutes' | 'hours' | 'daily'>('minutes')
@@ -1126,7 +1195,7 @@ function Tasks() {
   const cronSchedule = cronMode === 'simple' ? simpleSchedule : schedule
 
   const loadTasks = () => {
-    api<Task[]>('/tasks').then(v => setTasks(Array.isArray(v) ? v : [])).catch(() => {})
+    api<Task[]>('/tasks?limit=10').then(v => setTasks(Array.isArray(v) ? v.slice(0, 10) : [])).catch(() => {})
     api<Audit[]>('/audits').then(v => setAudits(Array.isArray(v) ? v : [])).catch(() => {})
   }
   const loadCron = () => api<CronJob[]>('/crontab').then(v => { setCrons(Array.isArray(v) ? v : []); setError('') }).catch(e => setError(e.message))
@@ -1136,6 +1205,7 @@ function Tasks() {
     const i = setInterval(loadTasks, 3000)
     return () => clearInterval(i)
   }, [])
+  useEffect(() => { setTaskDetail(current => current ? (tasks.find(task => task.id === current.id) || current) : null) }, [tasks])
 
   async function addCron() {
     try {
@@ -1164,13 +1234,13 @@ function Tasks() {
           <section className="split">
             <div className="panel"><PanelTitle title={t('tasksTitle')} />
               <div className="timeline">
-                {tasks.map(x => <div key={x.id}><span className={`task-dot ${x.status}`} /><div><strong>{taskTitle(x, lang)}</strong><small>{new Date(x.created_at).toLocaleString()} / {taskStatusLabel(x.status, t)}</small>{x.log && <pre>{x.log}</pre>}</div></div>)}
+                {tasks.map(x => <div key={x.id}><span className={`task-dot ${x.status}`} /><div><strong>{taskTitle(x, lang)}</strong><small>{new Date(x.created_at).toLocaleString()} / {taskStatusLabel(x.status, t)}</small><button className="task-detail-link" onClick={() => setTaskDetail(x)}>{t('viewDetails')}</button></div></div>)}
                 {!tasks.length && <div className="empty">{t('noData')}</div>}
               </div>
             </div>
             <div className="panel"><PanelTitle title={t('auditTitle')} />
               <div className="timeline">
-                {audits.map(x => <div key={x.id}><span className="task-dot succeeded" /><div><strong>{taskTitle({kind: x.action, summary: x.action}, lang)}</strong><small>{x.actor} / {x.resource}</small><p>{x.detail}</p></div></div>)}
+                {audits.map(x => <div key={x.id}><span className="task-dot succeeded" /><div><strong>{taskTitle({kind: x.action, summary: x.action}, lang)}</strong><small>{new Date(x.created_at).toLocaleString()} · {x.actor} · {x.remote_ip}</small>{auditDetail(x, lang) && <p>{auditDetail(x, lang)}</p>}</div></div>)}
                 {!audits.length && <div className="empty">{t('noData')}</div>}
               </div>
             </div>
@@ -1211,16 +1281,29 @@ function Tasks() {
             </div>
           </div>
         )}
+        {taskDetail && <TaskDetailModal task={taskDetail} onClose={() => setTaskDetail(null)} />}
       </div>
     </>
   )
+}
+
+function TaskDetailModal({task, onClose}: {task: Task; onClose: () => void}) {
+  const {t, lang} = useI18n()
+  return <div className="modal-back"><div className="modal task-detail-modal">
+    <button className="close" onClick={onClose}>×</button>
+    <h2>{taskTitle(task, lang)}</h2>
+    <div className="deploy-status"><span className={`task-dot ${task.status}`} /><strong>{taskStatusLabel(task.status, t)}</strong><small>{task.id}</small></div>
+    <dl className="task-meta"><div><dt>{t('createdAt')}</dt><dd>{new Date(task.created_at).toLocaleString()}</dd></div><div><dt>{t('updatedAt')}</dt><dd>{new Date(task.updated_at).toLocaleString()}</dd></div></dl>
+    <h3>{t('taskLog')}</h3><pre className="deploy-log">{task.log || t('noLog')}</pre>
+    <div className="card-actions"><button className="primary" onClick={onClose}>{t('close')}</button></div>
+  </div></div>
 }
 
 /* —— Alerts —— */
 function Alerts() {
   const {t} = useI18n()
   const [rules, setRules] = useState<AlertRule[]>([])
-  const [name, setName] = useState('High CPU'), [metric, setMetric] = useState('cpu')
+  const [name, setName] = useState(t('highCPU')), [metric, setMetric] = useState('cpu')
   const [threshold, setThreshold] = useState(90), [duration, setDuration] = useState(300)
   const [webhook, setWebhook] = useState(''), [message, setMessage] = useState('')
   const load = () => api<AlertRule[]>('/alerts/rules').then(v => setRules(Array.isArray(v) ? v : [])).catch(() => {})
@@ -1242,14 +1325,14 @@ function Alerts() {
           <div className="panel alert-form">
             <PanelTitle title={t('newRule')} />
             <label>{t('ruleName')}<input value={name} onChange={e => setName(e.target.value)} /></label>
-            <label>{t('metric')}<select value={metric} onChange={e => setMetric(e.target.value)}><option value="cpu">CPU %</option><option value="memory">Memory %</option><option value="disk">Disk %</option><option value="load">Load</option></select></label>
+            <label>{t('metric')}<select value={metric} onChange={e => setMetric(e.target.value)}><option value="cpu">CPU %</option><option value="memory">{t('memory')} %</option><option value="disk">{t('disk')} %</option><option value="load">{t('load')}</option></select></label>
             <label>{t('threshold')}<input type="number" value={threshold} onChange={e => setThreshold(+e.target.value)} /></label>
             <label>{t('durationSec')}<input type="number" value={duration} onChange={e => setDuration(+e.target.value)} /></label>
             <button className="primary" onClick={save}>{t('save')}</button>
           </div>
           <div className="panel alert-form">
             <PanelTitle title={t('notify')} />
-            <label>Webhook URL<input value={webhook} onChange={e => setWebhook(e.target.value)} placeholder="https://example.com/hook" /></label>
+            <label>{t('webhookURL')}<input value={webhook} onChange={e => setWebhook(e.target.value)} placeholder="https://example.com/hook" /></label>
             <button className="primary" onClick={saveNotify}>{t('save')}</button>
             {message && <div className="success">{message}</div>}
           </div>
@@ -1258,7 +1341,7 @@ function Alerts() {
           <table>
             <thead><tr><th>{t('ruleName')}</th><th>{t('metric')}</th><th>{t('threshold')}</th><th>{t('durationSec')}</th><th /></tr></thead>
             <tbody>
-              {rules.map(r => <tr key={r.id}><td>{r.name}</td><td>{r.metric}</td><td>{r.operator} {r.threshold}</td><td>{r.duration_seconds}s</td><td className="actions"><button className="danger" onClick={() => remove(r)}><Trash2 /></button></td></tr>)}
+              {rules.map(r => <tr key={r.id}><td>{r.name}</td><td>{metricLabel(r.metric, t)}</td><td>{t(r.operator === 'lt' ? 'lessThan' : 'greaterThan')} {r.threshold}</td><td>{r.duration_seconds} {t('seconds')}</td><td className="actions"><button className="danger" title={t('remove')} onClick={() => remove(r)}><Trash2 /></button></td></tr>)}
             </tbody>
           </table>
           {!rules.length && <div className="empty">{t('noData')}</div>}
@@ -1268,27 +1351,43 @@ function Alerts() {
   )
 }
 
-/* —— Settings (panel domain wizard + security + update) —— */
+/* —— Settings —— */
 function Settings({me, setMe}: {me: Me; setMe: (m: Me) => void}) {
   const {t} = useI18n()
-  const [tab, setTab] = useState<'panel' | 'security' | 'entry' | 'update'>(me.must_set_entry ? 'entry' : 'panel')
+  const [tab, setTab] = useState<'general' | 'security'>(me.must_set_entry ? 'security' : 'general')
   return (
     <>
       <PageHead title={t('settings')} />
       <div className="page-body">
         <div className="tabs">
-          <button className={tab === 'panel' ? 'active' : ''} onClick={() => setTab('panel')}>{t('settingsTabPanel')}</button>
+          <button className={tab === 'general' ? 'active' : ''} onClick={() => setTab('general')}>{t('settingsTabGeneral')}</button>
           <button className={tab === 'security' ? 'active' : ''} onClick={() => setTab('security')}>{t('settingsTabSecurity')}</button>
-          <button className={tab === 'entry' ? 'active' : ''} onClick={() => setTab('entry')}>{t('settingsTabEntry')}</button>
-          <button className={tab === 'update' ? 'active' : ''} onClick={() => setTab('update')}>{t('settingsTabUpdate')}</button>
         </div>
-        {tab === 'panel' && <PanelDomainWizard />}
-        {tab === 'security' && <SecurityBlock me={me} setMe={setMe} />}
-        {tab === 'entry' && <EntrySecurityBlock me={me} setMe={setMe} />}
-        {tab === 'update' && <UpdateBlock />}
+        {tab === 'general' && <div className="settings-stack"><LocalIPBlock /><UpdateBlock /></div>}
+        {tab === 'security' && <div className="settings-stack"><PanelDomainWizard /><EntrySecurityBlock me={me} setMe={setMe} /><SecurityBlock me={me} setMe={setMe} /></div>}
       </div>
     </>
   )
+}
+
+function LocalIPBlock() {
+  const {t} = useI18n()
+  const [ip, setIP] = useState(''), [detected, setDetected] = useState('')
+  const [message, setMessage] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false)
+  useEffect(() => { api<{local_ip: string; detected_ip: string}>('/settings/local-ip').then(v => { setIP(v.local_ip); setDetected(v.detected_ip) }).catch(e => setError(e.message)) }, [])
+  async function save() {
+    const warnings = [t('ipWarning1'), t('ipWarning2'), t('ipWarning3')]
+    for (const warning of warnings) if (!window.confirm(warning)) return
+    setBusy(true); setError(''); setMessage('')
+    try { const v = await post<{local_ip: string}>('/settings/local-ip', {local_ip: ip}); setIP(v.local_ip); setMessage(t('ipSaved')) }
+    catch (e) { setError((e as Error).message) } finally { setBusy(false) }
+  }
+  return <div className="panel settings-card">
+    <div className="settings-card-head"><span className="security-icon"><Network /></span><div><h2>{t('localIPTitle')}</h2><p>{t('localIPHint')}</p></div></div>
+    <label>{t('localIPAddress')}<input value={ip} onChange={e => setIP(e.target.value)} placeholder={detected || '192.168.1.10'} /><small>{t('detectedIP')}: {detected || '—'}</small></label>
+    <div className="card-actions"><button className="primary" disabled={busy || !ip.trim()} onClick={save}>{busy ? '…' : t('save')}</button></div>
+    {message && <div className="success">{message}</div>}{error && <div className="error">{error}</div>}
+  </div>
 }
 
 function EntrySecurityBlock({me, setMe}: {me: Me; setMe: (m: Me) => void}) {
@@ -1308,9 +1407,9 @@ function EntrySecurityBlock({me, setMe}: {me: Me; setMe: (m: Me) => void}) {
     } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
   return (
-    <div className="panel" style={{maxWidth: 720}}>
-      <div style={{display: 'flex', gap: 12, alignItems: 'flex-start', marginBottom: 14}}>
-        <LockKeyhole style={{color: 'var(--green)', width: 28, height: 28}} />
+    <div className="panel settings-card">
+      <div className="settings-card-head">
+        <span className="security-icon"><LockKeyhole /></span>
         <div>
           <h2 style={{margin: '0 0 4px', fontSize: 16}}>{t('entryTitle')}</h2>
           <p style={{margin: 0, color: 'var(--muted)', fontSize: 13}}>{t('entryDesc')}</p>
@@ -1359,9 +1458,9 @@ function PanelDomainWizard() {
   }
 
   return (
-    <div className="panel domain-card" style={{display: 'block'}}>
-      <div style={{display: 'flex', gap: 12, alignItems: 'flex-start', marginBottom: 12}}>
-        <Globe2 style={{color: 'var(--green)', width: 28, height: 28, flex: 'none'}} />
+    <div className="panel domain-card settings-card">
+      <div className="settings-card-head">
+        <span className="security-icon"><Globe2 /></span>
         <div><h2 style={{margin: '0 0 4px'}}>{t('domainHttps')}</h2><p style={{margin: 0, color: 'var(--muted)', fontSize: 13}}>{t('domainHint')}</p></div>
       </div>
       <div className="wizard-steps">
@@ -1458,9 +1557,9 @@ function UpdateBlock() {
   }
 
   return (
-    <div className="panel" style={{maxWidth: 720}}>
-      <div style={{display: 'flex', gap: 12, alignItems: 'flex-start', marginBottom: 16}}>
-        <Download style={{color: 'var(--green)', width: 28, height: 28}} />
+    <div className="panel settings-card">
+      <div className="settings-card-head">
+        <span className="security-icon"><Download /></span>
         <div><h2 style={{margin: '0 0 4px', fontSize: 16}}>{t('updateTitle')}</h2><p style={{margin: 0, color: 'var(--muted)', fontSize: 13}}>{t('updateHint')}</p></div>
       </div>
       {info && (
@@ -1624,7 +1723,7 @@ function taskStatusLabel(status: string, t: (k: any) => string) {
 /** Prefer backend Chinese summary; fall back to localizing kind + resource. */
 function taskTitle(task: {kind: string; summary: string; resource?: string}, lang: string) {
   // New backend summaries are already Chinese human text (contain · or CJK).
-  if (task.summary && (/[·\u4e00-\u9fff]/.test(task.summary))) return task.summary
+  if (lang === 'zh' && task.summary && (/[·\u4e00-\u9fff]/.test(task.summary))) return task.summary
   const labels: Record<string, {zh: string; en: string}> = {
     'panel.self_update': {zh: '面板更新', en: 'Panel update'},
     'panel.bind_domain': {zh: '绑定面板域名', en: 'Bind panel domain'},
@@ -1654,11 +1753,41 @@ function taskTitle(task: {kind: string; summary: string; resource?: string}, lan
     'service.stop': {zh: '停止服务', en: 'Stop service'},
     'service.restart': {zh: '重启服务', en: 'Restart service'},
     'notification.configure': {zh: '配置通知', en: 'Configure notifications'},
+    'auth.login_failed': {zh: '登录失败', en: 'Sign-in failed'},
+    'auth.login': {zh: '管理员登录', en: 'Administrator signed in'},
+    'auth.logout': {zh: '管理员退出', en: 'Administrator signed out'},
+    'account.change': {zh: '修改管理员账号', en: 'Administrator account changed'},
+    'account.totp_enable': {zh: '开启双因素认证', en: 'Two-factor authentication enabled'},
+    'account.totp_disable': {zh: '关闭双因素认证', en: 'Two-factor authentication disabled'},
+    'alert.save': {zh: '保存告警规则', en: 'Alert rule saved'},
+    'alert.delete': {zh: '删除告警规则', en: 'Alert rule deleted'},
+    'task.create': {zh: '创建面板任务', en: 'Panel task created'},
+    'settings.entry': {zh: '修改安全入口', en: 'Secure entry changed'},
+    'settings.local_ip': {zh: '修改本机 IP', en: 'Local IP changed'},
   }
   const L = labels[task.kind]
   const title = L ? (lang === 'zh' ? L.zh : L.en) : task.kind
-  const rest = (task.summary || '').replace(task.kind, '').trim()
+  const rest = lang === 'en' && /[\u4e00-\u9fff]/.test(task.summary)
+    ? (task.summary.includes('·') ? task.summary.split('·').slice(1).join('·').trim() : '')
+    : (task.summary || '').replace(task.kind, '').trim()
   return rest ? `${title} ${rest}` : title
+}
+
+function auditDetail(event: Audit, lang: string) {
+  if (!event.detail) return event.resource && event.resource !== 'session' ? event.resource : ''
+  const details: Record<string, {zh: string; en: string}> = {
+    'invalid credentials': {zh: '账号、密码或验证码不正确', en: 'Invalid credentials'},
+    'login succeeded': {zh: '登录成功', en: 'Sign-in succeeded'},
+    'credentials changed': {zh: '管理员凭据已修改', en: 'Administrator credentials changed'},
+  }
+  return details[event.detail]?.[lang === 'zh' ? 'zh' : 'en'] || event.detail
+}
+
+function metricLabel(metric: string, t: (k: any) => string) {
+  if (metric === 'memory') return t('memory')
+  if (metric === 'disk') return t('disk')
+  if (metric === 'load') return t('load')
+  return metric.toUpperCase()
 }
 
 function pct(a = 0, b = 0) { return b ? (a / b) * 100 : 0 }

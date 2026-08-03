@@ -56,6 +56,16 @@
   box-shadow: inset 0 0 0 1px rgba(0,0,0,.12);
 }
 .terminal-dots .dot-close:hover { filter: brightness(1.08); }
+.terminal-dots .dot-close { position: relative; }
+.terminal-dots .dot-close::before {
+  content: '×';
+  position: absolute;
+  inset: -3px 0 0;
+  color: #5b1714;
+  font: 700 12px/12px Arial, sans-serif;
+  opacity: 0;
+}
+.terminal-dots .dot-close:hover::before { opacity: 1; }
 .terminal-dots .dot-min { background: #febc2e; pointer-events: none; }
 .terminal-dots .dot-max { background: #28c840; pointer-events: none; }
 .terminal-head strong {

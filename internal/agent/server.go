@@ -62,6 +62,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	mux.HandleFunc("/v1/action", s.auth(s.action))
 	mux.HandleFunc("/v1/docker/inventory/", s.auth(s.inventory))
 	mux.HandleFunc("/v1/docker/terminal", s.auth(s.terminal))
+	mux.HandleFunc("/v1/host/terminal", s.auth(s.hostTerminal))
 	h := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		<-ctx.Done()

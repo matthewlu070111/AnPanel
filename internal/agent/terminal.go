@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 
 	"github.com/gorilla/websocket"
@@ -19,17 +20,32 @@ func (s *server) terminal(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid container id", 400)
 		return
 	}
+	cmd := exec.CommandContext(r.Context(), "docker", "exec", "-i", id, "/bin/sh")
+	if _, err := exec.LookPath("script"); err == nil {
+		cmd = exec.CommandContext(r.Context(), "script", "-qefc", "docker exec -it "+id+" /bin/sh", "/dev/null")
+	}
+	streamTerminal(w, r, cmd)
+}
+
+func (s *server) hostTerminal(w http.ResponseWriter, r *http.Request) {
+	if os.Geteuid() != 0 {
+		http.Error(w, "host terminal requires the agent to run as root", http.StatusForbidden)
+		return
+	}
+	cmd := exec.CommandContext(r.Context(), "/bin/bash", "-l")
+	if _, err := exec.LookPath("script"); err == nil {
+		cmd = exec.CommandContext(r.Context(), "script", "-qefc", "/bin/bash -l", "/dev/null")
+	}
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	streamTerminal(w, r, cmd)
+}
+
+func streamTerminal(w http.ResponseWriter, r *http.Request, cmd *exec.Cmd) {
 	conn, err := agentUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
 	defer conn.Close()
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "docker", "exec", "-i", id, "/bin/sh")
-	if _, err := exec.LookPath("script"); err == nil {
-		cmd = exec.CommandContext(ctx, "script", "-qefc", "docker exec -it "+id+" /bin/sh", "/dev/null")
-	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(err.Error()))
@@ -68,18 +84,28 @@ func (s *server) terminal(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	_ = stdin.Close()
-	cancel()
+	if cmd.Process != nil {
+		_ = cmd.Process.Kill()
+	}
 	_ = cmd.Wait()
 	_ = writer.Close()
 	<-done
 }
 
 func (c *Client) DialTerminal(ctx context.Context, id string) (*websocket.Conn, error) {
+	return c.dialTerminal(ctx, "/v1/docker/terminal?id="+url.QueryEscape(id))
+}
+
+func (c *Client) DialHostTerminal(ctx context.Context) (*websocket.Conn, error) {
+	return c.dialTerminal(ctx, "/v1/host/terminal")
+}
+
+func (c *Client) dialTerminal(ctx context.Context, path string) (*websocket.Conn, error) {
 	d := websocket.Dialer{NetDialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", c.socket)
 	}}
 	h := http.Header{}
 	h.Set("Authorization", "Bearer "+c.token)
-	conn, _, err := d.DialContext(ctx, "ws://unix/v1/docker/terminal?id="+url.QueryEscape(id), h)
+	conn, _, err := d.DialContext(ctx, "ws://unix"+path, h)
 	return conn, err
 }
