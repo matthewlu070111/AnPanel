@@ -111,6 +111,103 @@ func createWebsite(ctx context.Context, opts map[string]string) (ActionResult, e
 	return ActionResult{Output: "site created: " + path + "\n" + res.Output}, nil
 }
 
+// configureWebsite rewrites an AnPanel-managed site config (BT-style site settings save).
+func configureWebsite(ctx context.Context, opts map[string]string) (ActionResult, error) {
+	domain := normalizedDomain(opts["domain"])
+	if domain == "" {
+		domain = normalizedDomain(opts["resource"])
+	}
+	if !domainName.MatchString(domain) {
+		return ActionResult{}, errors.New("invalid domain name")
+	}
+	server := strings.ToLower(strings.TrimSpace(opts["server"]))
+	if server == "" {
+		var err error
+		server, err = preferredWebServer()
+		if err != nil {
+			return ActionResult{}, err
+		}
+	}
+	path, err := siteConfigPath(server, domain)
+	if err != nil {
+		return ActionResult{}, err
+	}
+	if !strings.HasPrefix(filepath.Base(path), "anpanel-site-") {
+		return ActionResult{}, errors.New("only AnPanel-managed sites can be reconfigured from the settings UI")
+	}
+	if _, err := os.Stat(path); err != nil {
+		return ActionResult{}, fmt.Errorf("site config not found: %s", path)
+	}
+
+	siteType := strings.ToLower(strings.TrimSpace(opts["site_type"]))
+	if siteType == "" {
+		if strings.TrimSpace(opts["proxy_pass"]) != "" {
+			siteType = "proxy"
+		} else {
+			siteType = "static"
+		}
+	}
+	rewrite := strings.TrimSpace(opts["rewrite"])
+	if rewrite == "" {
+		rewrite = "none"
+	}
+	if _, err := rewriteByID(rewrite); err != nil {
+		return ActionResult{}, err
+	}
+
+	// Preserve existing TLS material if present.
+	old, _ := os.ReadFile(path)
+	cert, key := extractTLSPaths(string(old), server)
+
+	var content string
+	switch siteType {
+	case "static":
+		root, err := safeWebRoot(opts["root"], domain)
+		if err != nil {
+			return ActionResult{}, err
+		}
+		if err := os.MkdirAll(root, 0755); err != nil {
+			return ActionResult{}, err
+		}
+		content = siteStaticConfig(server, domain, root, cert, key, rewrite)
+	case "proxy":
+		target := strings.TrimSpace(opts["proxy_pass"])
+		if target == "" {
+			return ActionResult{}, errors.New("proxy_pass is required for reverse proxy sites")
+		}
+		if !proxyURLRe.MatchString(target) {
+			return ActionResult{}, errors.New("invalid proxy_pass URL")
+		}
+		content = siteProxyConfig(server, domain, target, cert, key)
+	default:
+		return ActionResult{}, errors.New("site_type must be static or proxy")
+	}
+	res, err := applyWebConfig(ctx, path, content)
+	if err != nil {
+		return ActionResult{}, err
+	}
+	return ActionResult{Output: "site configured: " + path + "\n" + res.Output}, nil
+}
+
+func extractTLSPaths(raw, server string) (cert, key string) {
+	if server == "nginx" {
+		if m := regexp.MustCompile(`(?m)ssl_certificate\s+([^;]+);`).FindStringSubmatch(raw); len(m) > 1 {
+			cert = strings.TrimSpace(m[1])
+		}
+		if m := regexp.MustCompile(`(?m)ssl_certificate_key\s+([^;]+);`).FindStringSubmatch(raw); len(m) > 1 {
+			key = strings.TrimSpace(m[1])
+		}
+	} else {
+		if m := regexp.MustCompile(`(?mi)SSLCertificateFile\s+(\S+)`).FindStringSubmatch(raw); len(m) > 1 {
+			cert = strings.TrimSpace(m[1])
+		}
+		if m := regexp.MustCompile(`(?mi)SSLCertificateKeyFile\s+(\S+)`).FindStringSubmatch(raw); len(m) > 1 {
+			key = strings.TrimSpace(m[1])
+		}
+	}
+	return cert, key
+}
+
 func deleteWebsite(ctx context.Context, domain, server string) (ActionResult, error) {
 	domain = normalizedDomain(domain)
 	if !domainName.MatchString(domain) {

@@ -66,6 +66,14 @@ func executeAction(ctx context.Context, a ActionRequest) (ActionResult, error) {
 		return ActionResult{}, errors.New("unknown web server")
 	case "web.site.create":
 		return createWebsite(ctx, a.Options)
+	case "web.site.configure":
+		if a.Options == nil {
+			a.Options = map[string]string{}
+		}
+		if a.Options["domain"] == "" {
+			a.Options["domain"] = a.Resource
+		}
+		return configureWebsite(ctx, a.Options)
 	case "web.site.delete":
 		return deleteWebsite(ctx, a.Resource, a.Options["server"])
 	case "cert.issue":

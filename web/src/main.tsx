@@ -317,56 +317,13 @@ function Websites() {
   const {t} = useI18n()
   const [tab, setTab] = useState<'sites' | 'certs'>('sites')
   const [items, setItems] = useState<Website[]>(() => cached<Website[]>('websites', [])), [certs, setCerts] = useState<Certificate[]>(() => cached<Certificate[]>('certificates', []))
-  const [edit, setEdit] = useState<{path: string; content: string; title: string; kind: 'config' | 'file'} | null>(null)
+  const [settingsSite, setSettingsSite] = useState<Website | null>(null)
   const [wizard, setWizard] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState('')
   const loadSites = () => api<Website[]>('/websites').then(v => { const next = Array.isArray(v) ? v : []; setItems(next); cache('websites', next); setError('') }).catch(e => setError(e.message))
   const loadCerts = () => api<Certificate[]>('/certificates').then(v => { const next = Array.isArray(v) ? v : []; setCerts(next); cache('certificates', next); setError('') }).catch(e => setError(e.message))
   const load = () => { void loadSites(); void loadCerts() }
   useEffect(() => { load() }, [])
 
-  async function openConfig(s: Website) {
-    try {
-      const r = await api<{path: string; content: string}>(`/websites/config?path=${encodeURIComponent(s.source_path)}`)
-      setEdit({path: r.path, content: r.content, title: s.domains?.[0] || s.name, kind: 'config'})
-    } catch (e) { setError((e as Error).message) }
-  }
-  async function openContent(s: Website) {
-    if (!s.doc_root) return
-    const path = `${s.doc_root.replace(/\/$/, '')}/index.html`
-    try {
-      const r = await api<{content: string}>(`/files/content?path=${encodeURIComponent(path)}`)
-      setEdit({path, content: r.content, title: t('editContent'), kind: 'file'})
-    } catch (e) { setError((e as Error).message) }
-  }
-  async function applyConfig() {
-    if (!edit) return
-    await post('/actions', {kind: edit.kind === 'config' ? 'web.apply' : 'files.write', resource: edit.path, options: {content: edit.content}})
-    setEdit(null); setMessage(t('success'))
-    if (edit.kind === 'config') setTimeout(loadSites, 1200)
-  }
-  async function issueSSL(site: Website) {
-    const domain = site.domains?.[0]; if (!domain) return
-    await post('/actions', {kind: 'cert.issue', resource: domain, options: {tool: 'certbot', server: site.server}})
-    setMessage(t('issueTask'))
-  }
-  async function setRewrite(site: Website) {
-    const domain = site.domains?.[0]; if (!domain) return
-    try {
-      const rules = await api<RewriteRule[]>('/rewrite-rules')
-      const ids = rules.map(r => r.id).join(', ')
-      const pick = prompt(`${t('rewrite')} (${ids})`, 'none')
-      if (!pick) return
-      await post('/actions', {kind: 'web.site.rewrite', resource: domain, options: {rewrite: pick, server: site.server}})
-      setMessage(t('success'))
-    } catch (e) { setError((e as Error).message) }
-  }
-  async function deleteSite(site: Website) {
-    const domain = site.domains?.[0]; if (!domain) return
-    if (!site.source_path.includes('anpanel-site-')) { setError(t('onlyManaged')); return }
-    if (prompt(t('confirmDelete')) !== 'DELETE') return
-    await post('/actions', {kind: 'web.site.delete', resource: domain, options: {server: site.server}})
-    setMessage(t('success')); setTimeout(loadSites, 1200)
-  }
   async function renew(domain = '', force = false) {
     await post('/actions', {kind: 'cert.renew', resource: domain, options: {force: force ? 'true' : 'false'}})
     setMessage(t('renewTask')); setTimeout(loadCerts, 2000)
@@ -398,41 +355,32 @@ function Websites() {
         </div>
         {error && <div className="error banner">{error}</div>}
         {message && <div className="success" style={{marginBottom: 12}}>{message}</div>}
-
         {tab === 'sites' && (
-          <>
-            <div className="panel table-panel website-table">
-              <table className="site-table">
-                <thead><tr><th>{t('domainLabel')}</th><th>{t('siteType')}</th><th>{t('siteDirectory')}</th><th>{t('status')}</th><th>SSL</th><th>{t('actions')}</th></tr></thead>
-                <tbody>
-                  {items.map(s => (
-                    <tr key={s.id}>
-                      <td>
-                        <strong className="site-domain"><span className={`dot ${s.enabled ? 'ok' : ''}`} />{s.domains?.join(' ') || s.name}</strong>
-                        <div style={{fontSize: 12, color: 'var(--muted)', marginTop: 2}}>{s.listen?.join(', ')}</div>
-                      </td>
-                      <td><span className={`server-tag ${s.server === 'apache' ? 'apache' : ''}`}>{s.server}</span><small className="site-kind">{s.proxy_target ? t('siteTypeProxy') : t('siteTypeStatic')}</small></td>
-                      <td style={{maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>
-                        {s.proxy_target || s.doc_root || t('staticSite')}
-                      </td>
-                      <td><span className={`pill ${s.enabled ? 'green' : ''}`}>{s.enabled ? t('active') : t('inactive')}</span></td>
-                      <td><span className={`pill ${(s.has_https || s.tls) ? 'green' : ''}`}>{protoLabel(s)}</span></td>
-                      <td>
-                        <div className="site-ops">
-                          {s.domains?.[0] && !(s.has_https || s.tls) && <button className="btn" onClick={() => issueSSL(s)}><FileKey2 size={14} />{t('issueSSL')}</button>}
-                          {s.source_path.includes('anpanel-site-') && <button className="btn" onClick={() => setRewrite(s)}>{t('setRewrite')}</button>}
-                          {s.doc_root && <button className="btn" onClick={() => openContent(s)}><Pencil size={14} />{t('editContent')}</button>}
-                          <button className="btn" onClick={() => openConfig(s)}>{t('advancedConfig')}</button>
-                          {s.source_path.includes('anpanel-site-') && <button className="btn" onClick={() => deleteSite(s)}>{t('deleteSite')}</button>}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {!items.length && !error && <div className="empty">{t('noData')}</div>}
-            </div>
-          </>
+          <div className="panel table-panel website-table">
+            <table className="site-table">
+              <thead><tr><th>{t('domainLabel')}</th><th>{t('siteType')}</th><th>{t('siteDirectory')}</th><th>{t('status')}</th><th>SSL</th><th>{t('actions')}</th></tr></thead>
+              <tbody>
+                {items.map(s => (
+                  <tr key={s.id} className="site-row" onClick={() => setSettingsSite(s)}>
+                    <td>
+                      <strong className="site-domain"><span className={`dot ${s.enabled ? 'ok' : ''}`} />{s.domains?.join(' ') || s.name}</strong>
+                      <div style={{fontSize: 12, color: 'var(--muted)', marginTop: 2}}>{s.listen?.join(', ') || t('clickToSettings')}</div>
+                    </td>
+                    <td><span className={`server-tag ${s.server === 'apache' ? 'apache' : ''}`}>{s.server}</span><small className="site-kind">{s.proxy_target ? t('siteTypeProxy') : t('siteTypeStatic')}</small></td>
+                    <td style={{maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>{s.proxy_target || s.doc_root || t('staticSite')}</td>
+                    <td><span className={`pill ${s.enabled ? 'green' : ''}`}>{s.enabled ? t('active') : t('inactive')}</span></td>
+                    <td><span className={`pill ${(s.has_https || s.tls) ? 'green' : ''}`}>{protoLabel(s)}</span></td>
+                    <td onClick={e => e.stopPropagation()}>
+                      <div className="site-ops">
+                        <button className="primary" onClick={() => setSettingsSite(s)}>{t('siteSettings')}</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!items.length && !error && <div className="empty">{t('noData')}</div>}
+          </div>
         )}
 
         {tab === 'certs' && (
@@ -465,18 +413,242 @@ function Websites() {
           </div>
         )}
 
-        {edit && (
-          <div className="modal-back"><div className="modal editor">
-            <button className="close" onClick={() => setEdit(null)}>×</button>
-            <h2>{edit.title}</h2>
-            <small>{t('source')}: {edit.path}</small>
-            <textarea spellCheck={false} value={edit.content} onChange={e => setEdit({...edit, content: e.target.value})} />
-            <button className="primary" onClick={applyConfig}>{t('apply')}</button>
-          </div></div>
+        {settingsSite && (
+          <SiteSettings
+            site={settingsSite}
+            onClose={() => setSettingsSite(null)}
+            onChanged={() => { setMessage(t('settingsSaved')); setTimeout(load, 1200) }}
+            onDeleted={() => { setSettingsSite(null); setMessage(t('success')); setTimeout(loadSites, 1200) }}
+          />
         )}
         {wizard && <SiteWizard onClose={() => setWizard(false)} onCreated={() => { setWizard(false); setMessage(t('siteCreated')); setTimeout(load, 1500) }} />}
       </div>
     </>
+  )
+}
+
+type SiteTab = 'basic' | 'proxy' | 'rewrite' | 'ssl' | 'config' | 'danger'
+
+function SiteSettings({site, onClose, onChanged, onDeleted}: {
+  site: Website
+  onClose: () => void
+  onChanged: () => void
+  onDeleted: () => void
+}) {
+  const {t} = useI18n()
+  const managed = site.source_path.includes('anpanel-site-')
+  const domain = site.domains?.[0] || site.name
+  const [tab, setTab] = useState<SiteTab>('basic')
+  const [siteType, setSiteType] = useState<'static' | 'proxy'>(site.proxy_target ? 'proxy' : 'static')
+  const [root, setRoot] = useState(site.doc_root || `/var/www/${domain}`)
+  const [proxyPass, setProxyPass] = useState(site.proxy_target || 'http://127.0.0.1:3000')
+  const [rewrite, setRewrite] = useState('none')
+  const [rules, setRules] = useState<RewriteRule[]>([])
+  const [config, setConfig] = useState('')
+  const [tool, setTool] = useState('certbot')
+  const [email, setEmail] = useState('')
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    api<RewriteRule[]>('/rewrite-rules').then(v => setRules(Array.isArray(v) ? v : [])).catch(() => {})
+    api<{content: string}>(`/websites/config?path=${encodeURIComponent(site.source_path)}`)
+      .then(r => setConfig(r.content || ''))
+      .catch(e => setError(e.message))
+  }, [site.source_path])
+
+  const preview = rules.find(r => r.id === rewrite)
+  const previewText = site.server === 'apache' ? preview?.apache : preview?.nginx
+
+  async function saveBasic(nextType: 'static' | 'proxy' = siteType) {
+    if (!managed) { setError(t('managedOnly')); return }
+    setBusy(true); setError(''); setMessage('')
+    try {
+      setSiteType(nextType)
+      await post('/actions', {
+        kind: 'web.site.configure',
+        resource: domain,
+        options: {
+          domain, server: site.server, site_type: nextType, rewrite,
+          root: nextType === 'static' ? root : '',
+          proxy_pass: nextType === 'proxy' ? proxyPass : '',
+        },
+      })
+      setMessage(t('settingsSaved')); onChanged()
+    } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
+  }
+
+  async function saveRewrite() {
+    if (!managed) { setError(t('managedOnly')); return }
+    setBusy(true); setError('')
+    try {
+      await post('/actions', {kind: 'web.site.rewrite', resource: domain, options: {rewrite, server: site.server}})
+      setMessage(t('settingsSaved')); onChanged()
+      const r = await api<{content: string}>(`/websites/config?path=${encodeURIComponent(site.source_path)}`)
+      setConfig(r.content || '')
+    } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
+  }
+
+  async function saveConfig() {
+    setBusy(true); setError('')
+    try {
+      await post('/actions', {kind: 'web.apply', resource: site.source_path, options: {content: config}})
+      setMessage(t('settingsSaved')); onChanged()
+    } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
+  }
+
+  async function issueSSL() {
+    setBusy(true); setError('')
+    try {
+      await post('/actions', {kind: 'cert.issue', resource: domain, options: {tool, email, server: site.server}})
+      setMessage(t('issueTask')); onChanged()
+    } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
+  }
+
+  async function removeSite() {
+    if (!managed) { setError(t('onlyManaged')); return }
+    if (prompt(t('confirmDelete')) !== 'DELETE') return
+    setBusy(true)
+    try {
+      await post('/actions', {kind: 'web.site.delete', resource: domain, options: {server: site.server}})
+      onDeleted()
+    } catch (e) { setError((e as Error).message); setBusy(false) }
+  }
+
+  const tabs: {id: SiteTab; label: string}[] = [
+    {id: 'basic', label: t('tabBasic')},
+    {id: 'proxy', label: t('tabProxy')},
+    {id: 'rewrite', label: t('tabRewrite')},
+    {id: 'ssl', label: t('tabSSL')},
+    {id: 'config', label: t('tabConfig')},
+    {id: 'danger', label: t('tabDanger')},
+  ]
+
+  return (
+    <div className="modal-back site-settings-back">
+      <div className="site-settings-panel">
+        <header className="site-settings-head">
+          <div>
+            <h2>{t('siteSettingsTitle')}</h2>
+            <p>{domain} · {site.server} · {site.source_path}</p>
+          </div>
+          <button className="close" onClick={onClose}>×</button>
+        </header>
+        <div className="site-settings-body">
+          <nav className="site-settings-nav">
+            {tabs.map(x => (
+              <button key={x.id} className={tab === x.id ? 'active' : ''} onClick={() => setTab(x.id)}>{x.label}</button>
+            ))}
+          </nav>
+          <div className="site-settings-main">
+            {!managed && tab !== 'config' && tab !== 'ssl' && (
+              <div className="warning" style={{marginBottom: 12}}>{t('managedOnly')}</div>
+            )}
+            {error && <div className="error banner">{error}</div>}
+            {message && <div className="success" style={{marginBottom: 12}}>{message}</div>}
+
+            {tab === 'basic' && (
+              <div className="site-settings-form">
+                <label>{t('domainLabel')}<input value={domain} disabled /></label>
+                <label>{t('listenPorts')}<input value={site.listen?.join(', ') || '-'} disabled /></label>
+                <label>{t('siteEnabled')}<input value={site.enabled ? t('active') : t('inactive')} disabled /></label>
+                <label>{t('siteType')}
+                  <select value={siteType} disabled={!managed} onChange={e => setSiteType(e.target.value as 'static' | 'proxy')}>
+                    <option value="static">{t('siteTypeStatic')}</option>
+                    <option value="proxy">{t('siteTypeProxy')}</option>
+                  </select>
+                </label>
+                {siteType === 'static' ? (
+                  <label className="full">{t('docRoot')}<input value={root} disabled={!managed} onChange={e => setRoot(e.target.value)} /><small>{t('docRootHint')}</small></label>
+                ) : (
+                  <label className="full">{t('proxyPass')}<input value={proxyPass} disabled={!managed} onChange={e => setProxyPass(e.target.value)} /><small>{t('proxyPassHint')}</small></label>
+                )}
+                {managed && (
+                  <div className="card-actions">
+                    <button className="primary" disabled={busy} onClick={() => void saveBasic()}>{busy ? '…' : t('saveSettings')}</button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {tab === 'proxy' && (
+              <div className="site-settings-form">
+                <p className="form-hint">{t('siteTypeProxyHint')}</p>
+                <label className="full">{t('proxyPass')}<input value={proxyPass} disabled={!managed} onChange={e => setProxyPass(e.target.value)} placeholder="http://127.0.0.1:3000" /></label>
+                {managed && (
+                  <div className="card-actions">
+                    <button className="primary" disabled={busy} onClick={() => void saveBasic('proxy')}>{busy ? '…' : t('saveSettings')}</button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {tab === 'rewrite' && (
+              <div className="site-settings-form">
+                <p className="form-hint">{t('rewriteHint')}</p>
+                <label className="full">{t('rewrite')}
+                  <select value={rewrite} disabled={!managed} onChange={e => setRewrite(e.target.value)}>
+                    {(rules.length ? rules : [{id: 'none', name: 'none', description: '', nginx: '', apache: ''} as RewriteRule]).map(r => (
+                      <option key={r.id} value={r.id}>{r.name}{r.description ? ` — ${r.description}` : ''}</option>
+                    ))}
+                  </select>
+                </label>
+                {previewText && (
+                  <label className="full">{t('rewritePreview')}<textarea className="rewrite-preview" readOnly value={previewText} rows={10} /></label>
+                )}
+                {managed && (
+                  <div className="card-actions">
+                    <button className="primary" disabled={busy} onClick={saveRewrite}>{busy ? '…' : t('saveSettings')}</button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {tab === 'ssl' && (
+              <div className="site-settings-form">
+                <div className={`ssl-status-card ${(site.has_https || site.tls) ? 'ok' : ''}`}>
+                  <FileKey2 size={22} />
+                  <div>
+                    <strong>{t('sslStatus')}</strong>
+                    <p>{(site.has_https || site.tls) ? t('sslOk') : t('sslNone')}</p>
+                  </div>
+                  <span className={`pill ${(site.has_https || site.tls) ? 'green' : ''}`}>{(site.has_https || site.tls) ? t('tlsOn') : t('tlsOff')}</span>
+                </div>
+                <label>{t('acmeTool')}<select value={tool} onChange={e => setTool(e.target.value)}><option value="certbot">certbot</option><option value="acme.sh">acme.sh</option></select></label>
+                <label>{t('email')}<input type="email" value={email} onChange={e => setEmail(e.target.value)} /></label>
+                <div className="steps"><ol><li>{t('step1')}</li><li>{t('step2')}</li><li>{t('step3')}</li></ol></div>
+                <div className="card-actions">
+                  <button className="primary" disabled={busy || !domain} onClick={issueSSL}>{busy ? '…' : t('issueSSL')}</button>
+                </div>
+              </div>
+            )}
+
+            {tab === 'config' && (
+              <div className="site-settings-form config-tab">
+                <small>{t('source')}: {site.source_path}</small>
+                <textarea className="config-editor" spellCheck={false} value={config} onChange={e => setConfig(e.target.value)} />
+                <div className="card-actions">
+                  <button className="primary" disabled={busy} onClick={saveConfig}>{busy ? '…' : t('apply')}</button>
+                </div>
+              </div>
+            )}
+
+            {tab === 'danger' && (
+              <div className="site-settings-form">
+                <div className="danger-box">
+                  <h3>{t('deleteSite')}</h3>
+                  <p>{t('onlyManaged')}</p>
+                  <button className="primary" style={{background: 'var(--danger)', borderColor: 'var(--danger)'}} disabled={busy || !managed} onClick={removeSite}>
+                    {t('deleteSite')}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 
