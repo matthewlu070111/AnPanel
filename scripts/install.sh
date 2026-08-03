@@ -180,7 +180,15 @@ chmod 0644 /etc/systemd/system/anpanel-agent.service /etc/systemd/system/anpanel
 ADMIN_CREDENTIALS=$(/usr/local/bin/anpanel ctl init-admin)
 chown -R anpanel:anpanel-agent /var/lib/anpanel
 systemctl daemon-reload
-systemctl enable --now anpanel-agent.service anpanel-web.service
+systemctl enable anpanel-agent.service anpanel-web.service
+# enable --now does not reload an already-running process after binary replace.
+# Always restart so upgrades (including panel.self_update) pick up the new binary.
+systemctl restart anpanel-agent.service anpanel-web.service
+systemctl is-active --quiet anpanel-agent.service anpanel-web.service || {
+  echo 'AnPanel services failed to start after install/upgrade.' >&2
+  systemctl --no-pager --full status anpanel-agent.service anpanel-web.service || true
+  exit 1
+}
 
 if [[ "$OPEN_FIREWALL" == 1 ]]; then
   if command -v firewall-cmd >/dev/null; then firewall-cmd --permanent --add-port="$PORT/tcp" && firewall-cmd --reload

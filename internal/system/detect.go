@@ -20,16 +20,13 @@ func DetectServices() []domain.DetectedService {
 	certbotPath, certbotOK := lookAny("certbot")
 	_, snapOK := lookAny("snap")
 	acmePath, acmeOK := findAcme()
-	phpPath, phpOK := lookAny("php")
-	composeOK, composeVer, composePath := detectCompose()
+	composeOK, composeVer, _ := detectCompose()
 
 	installed["nginx"] = nginxOK
 	installed["apache"] = apacheOK
 	installed["docker"] = dockerOK
-	installed["compose"] = composeOK
 	installed["certbot"] = certbotOK
 	installed["acme.sh"] = acmeOK
-	installed["php"] = phpOK
 
 	certbotMethods, certbotDefault := []string{"source", "package"}, "source"
 	if certbotOK {
@@ -38,23 +35,103 @@ func DetectServices() []domain.DetectedService {
 	if snapOK && (!certbotOK || certbotDefault == "snap") {
 		certbotMethods, certbotDefault = append([]string{"snap"}, certbotMethods...), "snap"
 	}
+
+	// Compose is NOT listed as a separate app store entry — it ships with Docker Engine.
+	dockerNote := ""
+	if dockerOK {
+		if composeOK {
+			dockerNote = "已包含 Docker Compose（" + composeVer + "）"
+		} else {
+			dockerNote = "未检测到 docker compose 插件，更新 Docker 时可一并安装"
+		}
+	} else {
+		dockerNote = "安装 Docker Engine 时会同时提供 Compose V2 插件（docker compose）"
+	}
+
+	// Only host-native installs: nginx/apache/docker/certbot/acme.sh.
+	// Everything else (PHP, 3x-ui, …) is offered as Docker one-click deploy.
 	out := []domain.DetectedService{
 		soft("nginx", "Nginx", "web", []string{"apache"}, []string{"source", "package"}, "source", nil, nginxOK, nginxPath, "/etc/nginx/nginx.conf", serviceUnitStatus("nginx"), installed),
 		soft("apache", "Apache", "web", []string{"nginx"}, []string{"source", "package"}, "source", nil, apacheOK, apachePath, apacheConfig(), serviceUnitStatusApache(), installed),
 		soft("docker", "Docker Engine", "container", nil, []string{"script", "package"}, "script", nil, dockerOK, dockerPath, "/etc/docker/daemon.json", serviceUnitStatus("docker"), installed),
+		soft("certbot", "Certbot", "ssl", []string{"acme.sh"}, certbotMethods, certbotDefault, nil, certbotOK, certbotPath, "/etc/letsencrypt", toolStatus(certbotOK), installed),
+		soft("acme.sh", "acme.sh", "ssl", []string{"certbot"}, []string{"script"}, "script", nil, acmeOK, acmePath, "/root/.acme.sh", toolStatus(acmeOK), installed),
+	}
+	for i := range out {
+		out[i].Deploy = "native"
+		if out[i].Name == "docker" {
+			out[i].Note = dockerNote
+		}
+	}
+	out = append(out, dockerCatalogApps(dockerOK)...)
+	return out
+}
+
+// dockerCatalogApps lists marketplace apps that deploy only via Docker.
+func dockerCatalogApps(dockerOK bool) []domain.DetectedService {
+	type item struct {
+		name, display, group, image, hostPort, containerPort, dockerName, note string
+		versions                                                               []string
+	}
+	items := []item{
 		{
-			Name: "compose", DisplayName: "Docker Compose", Group: "container",
-			Installed: composeOK, Path: composePath, Version: composeVer,
-			Status: map[bool]string{true: "available", false: "not-installed"}[composeOK],
-			CanInstall: false, CanUpdate: false,
-			Note: "Compose V2 已包含在 Docker Engine 中（docker compose），无需单独安装。",
-			BlockReason: map[bool]string{true: "", false: "请先安装 Docker Engine；Compose 插件会随 docker-ce 一起提供。"}[composeOK],
+			name: "3x-ui", display: "3x-ui", group: "apps",
+			image: "ghcr.io/mhsanaei/3x-ui:latest", hostPort: "2053", containerPort: "2053",
+			dockerName: "anpanel-3x-ui",
+			note:       "通过 Docker 部署 · 面板默认端口 2053",
 		},
-		soft("certbot", "Certbot", "ssl", []string{"acme.sh"}, certbotMethods, certbotDefault, nil, certbotOK, certbotPath, "/etc/letsencrypt", map[bool]string{true: "available", false: "not-installed"}[certbotOK], installed),
-		soft("acme.sh", "acme.sh", "ssl", []string{"certbot"}, []string{"script"}, "script", nil, acmeOK, acmePath, "/root/.acme.sh", map[bool]string{true: "available", false: "not-installed"}[acmeOK], installed),
-		soft("php", "PHP", "runtime", nil, []string{"source", "package"}, "source", []string{"8.1", "8.2", "8.3", "8.4"}, phpOK, phpPath, phpIniPath(phpPath), phpStatus(), installed),
+		{
+			name: "php", display: "PHP", group: "runtime",
+			image: "php:8.3-fpm", hostPort: "9000", containerPort: "9000",
+			dockerName: "anpanel-php",
+			versions:   []string{"8.1", "8.2", "8.3", "8.4"},
+			note:       "通过 Docker 部署 PHP-FPM（非本机编译）",
+		},
+	}
+	out := make([]domain.DetectedService, 0, len(items))
+	for _, it := range items {
+		running, version := dockerAppStatus(it.dockerName, it.image)
+		s := domain.DetectedService{
+			Name: it.name, DisplayName: it.display, Group: it.group,
+			Deploy: "docker", Image: it.image, HostPort: it.hostPort, ContainerPort: it.containerPort,
+			DockerName: it.dockerName, Note: it.note, Versions: it.versions,
+			Installed: running, Status: map[bool]string{true: "running", false: "not-installed"}[running],
+			Version: version, CanInstall: dockerOK && !running, CanUpdate: dockerOK && running,
+		}
+		if !dockerOK {
+			s.CanInstall = false
+			s.BlockReason = "请先安装 Docker Engine，再通过 Docker 部署此应用"
+		}
+		out = append(out, s)
 	}
 	return out
+}
+
+func dockerAppStatus(name, image string) (running bool, version string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	// docker inspect running container by name
+	b, err := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Running}}|{{.Config.Image}}", name).CombinedOutput()
+	if err != nil {
+		return false, ""
+	}
+	parts := strings.SplitN(strings.TrimSpace(string(b)), "|", 2)
+	if len(parts) > 0 && parts[0] == "true" {
+		img := image
+		if len(parts) > 1 {
+			img = parts[1]
+		}
+		return true, img
+	}
+	return false, ""
+}
+
+// toolStatus: installed tools that are not systemd services show as "installed".
+func toolStatus(ok bool) string {
+	if ok {
+		return "installed"
+	}
+	return "not-installed"
 }
 
 func CertbotInstallMethod(path string) string {
@@ -177,10 +254,14 @@ func commandVersion(bin string) string {
 
 func serviceUnitStatus(name string) string {
 	if exec.Command("systemctl", "is-active", "--quiet", name).Run() == nil {
-		return "active"
+		return "running"
 	}
 	if _, err := exec.LookPath(name); err == nil {
-		return "inactive"
+		return "stopped"
+	}
+	// also detect compiled installs not necessarily on PATH for systemctl
+	if CompiledBin(name) != "" {
+		return "stopped"
 	}
 	return "not-installed"
 }
@@ -188,11 +269,11 @@ func serviceUnitStatus(name string) string {
 func serviceUnitStatusApache() string {
 	for _, n := range []string{"apache2", "httpd"} {
 		if exec.Command("systemctl", "is-active", "--quiet", n).Run() == nil {
-			return "active"
+			return "running"
 		}
 	}
 	if _, ok := lookAny("apache2", "httpd"); ok {
-		return "inactive"
+		return "stopped"
 	}
 	return "not-installed"
 }
@@ -227,11 +308,11 @@ func phpIniPath(phpBin string) string {
 func phpStatus() string {
 	for _, n := range []string{"php-fpm", "php8.3-fpm", "php8.2-fpm", "php8.1-fpm", "php8.4-fpm"} {
 		if exec.Command("systemctl", "is-active", "--quiet", n).Run() == nil {
-			return "active"
+			return "running"
 		}
 	}
 	if _, ok := lookAny("php"); ok {
-		return "available"
+		return "installed"
 	}
 	return "not-installed"
 }

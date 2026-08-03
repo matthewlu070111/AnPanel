@@ -110,6 +110,7 @@ function Shell({me, setMe}: {me: Me; setMe: (m: Me | null) => void}) {
       </aside>
       <main className="content">
         {me.must_change && <FirstLogin me={me} setMe={setMe} />}
+        {!me.must_change && me.must_set_entry && <ForceEntrySetup me={me} setMe={setMe} />}
         {page === 'dashboard' && <Dashboard goSettings={() => navigate('settings')} />}
         {page === 'docker' && <DockerPage />}
         {page === 'websites' && <Websites />}
@@ -139,6 +140,40 @@ function FirstLogin({me, setMe}: {me: Me; setMe: (m: Me) => void}) {
         <label>{t('newPassword')}<input type="password" value={password} onChange={e => setPass(e.target.value)} /></label>
         {error && <div className="error">{error}</div>}
         <button className="primary">{t('save')}</button>
+      </form>
+    </div>
+  )
+}
+
+function ForceEntrySetup({me, setMe}: {me: Me; setMe: (m: Me) => void}) {
+  const {t} = useI18n()
+  const [path, setPath] = useState(() => Math.random().toString(36).slice(2, 12))
+  const [decoy, setDecoy] = useState<'404' | 'dino'>('404')
+  const [error, setError] = useState(''), [busy, setBusy] = useState(false)
+  async function save(e: React.FormEvent) {
+    e.preventDefault(); setBusy(true); setError('')
+    try {
+      const v = await post<Me & {ok?: boolean}>('/settings/entry', {path, decoy_mode: decoy})
+      setMe({...me, must_set_entry: false, entry_path: v.entry_path || path, decoy_mode: v.decoy_mode || decoy, entry_url: v.entry_url || ('/' + path)})
+    } catch (err) { setError((err as Error).message) } finally { setBusy(false) }
+  }
+  return (
+    <div className="modal-back">
+      <form className="modal entry-force-modal" onSubmit={save}>
+        <LockKeyhole />
+        <h2>{t('entryForceTitle')}</h2>
+        <p className="form-hint">{t('entryForceHint')}</p>
+        <label>{t('entryPath')}<input value={path} onChange={e => setPath(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))} minLength={4} maxLength={64} required /><small>{t('entryPathHint')}</small></label>
+        <label>{t('decoyMode')}
+          <select value={decoy} onChange={e => setDecoy(e.target.value as '404' | 'dino')}>
+            <option value="404">{t('decoy404')}</option>
+            <option value="dino">{t('decoyDino')}</option>
+          </select>
+          <small>{t('decoyHint')}</small>
+        </label>
+        <div className="entry-preview">{t('entryPreview')}: <code>{location.origin}/{path}</code></div>
+        {error && <div className="error">{error}</div>}
+        <button className="primary" disabled={busy || path.length < 4}>{busy ? '…' : t('saveEntry')}</button>
       </form>
     </div>
   )
@@ -197,7 +232,7 @@ function Dashboard({goSettings}: {goSettings: () => void}) {
           <div className="panel wide"><PanelTitle title={t('performance')} /><Spark data={history} empty={t('collecting')} /></div>
           <div className="panel"><PanelTitle title={t('serviceHealth')} />
             <div className="service-list">
-              {services.map(s => <div key={s.name}><span className={`dot ${s.status === 'active' || s.status === 'available' ? 'ok' : ''}`} /><div><strong>{s.display_name || s.name}</strong><small>{s.version || s.path}</small></div><em>{s.status}</em></div>)}
+              {services.filter(s => s.name !== 'compose').map(s => <div key={s.name}><span className={`dot ${statusOk(s.status) ? 'ok' : ''}`} /><div><strong>{s.display_name || s.name}</strong><small>{s.version || s.path}</small></div><em>{statusLabel(s.status, t)}</em></div>)}
               {!services.length && <div className="empty">{t('noData')}</div>}
             </div>
           </div>
@@ -304,8 +339,15 @@ function ContainerTerminal({container, onClose}: {container: Container; onClose:
   }, [container.id])
   return (
     <div className="modal-back"><div className="modal terminal-modal">
-      <button className="close" onClick={onClose}>×</button>
-      <div className="terminal-head"><span className="terminal-dots"><i /><i /><i /></span><strong>{container.names?.[0]?.replace('/', '') || container.id.slice(0, 12)}</strong><em className={connected ? 'online' : ''}>{connected ? t('connected') : t('connecting')}</em></div>
+      <div className="terminal-head">
+        <span className="terminal-dots" title={t('logout')}>
+          <button type="button" className="dot-close" aria-label="close" onClick={onClose} />
+          <i className="dot-min" />
+          <i className="dot-max" />
+        </span>
+        <strong>{container.names?.[0]?.replace('/', '') || container.id.slice(0, 12)}</strong>
+        <em className={connected ? 'online' : ''}>{connected ? t('connected') : t('connecting')}</em>
+      </div>
       <div ref={host} className="terminal-screen" />
       <small className="terminal-hint">{t('terminalHint')}</small>
     </div></div>
@@ -836,12 +878,18 @@ function Services() {
   }
   async function doUpdate(s: Service) {
     try {
-      await post('/actions', {kind: 'package.update', resource: s.name, options: {method: s.default_method || 'source'}})
+      if (s.deploy === 'docker') {
+        await post('/actions', {kind: 'package.update', resource: s.name, options: {deploy: 'docker', version: s.versions?.[s.versions.length - 2] || s.versions?.[0] || '', host_port: s.host_port || ''}})
+      } else {
+        const method = s.name === 'docker' ? '' : (s.default_method || 'source')
+        await post('/actions', {kind: 'package.update', resource: s.name, options: method ? {method} : {}})
+      }
       setMessage(t('updateQueued'))
     } catch (e) { setError((e as Error).message) }
   }
   const q = query.trim().toLowerCase()
   const systemApps = items
+    .filter(s => s.name !== 'compose') // Compose is bundled with Docker, never show alone
     .filter(s => !q || `${s.name} ${s.display_name || ''}`.toLowerCase().includes(q))
     .sort((a, b) => Number(b.name === 'docker') - Number(a.name === 'docker'))
   return (
@@ -865,19 +913,22 @@ function Services() {
                         <small>{s.version || s.path || t('missing')}</small>
                       </div>
                     </div>
-                    <span className={`pill ${s.status === 'active' || s.status === 'available' ? 'green' : ''}`}>{s.status}</span>
-                    {s.name === 'docker' && <p className="docker-app-hint">{t('dockerInstallHint')}</p>}
-                    {s.note && <p style={{gridColumn: '1/-1', margin: 0, fontSize: 12, color: 'var(--muted)'}}>{s.note}</p>}
+                    <div style={{display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end'}}>
+                      {s.deploy === 'docker' && <span className="pill">{t('deployDockerBadge')}</span>}
+                      <span className={`pill ${statusOk(s.status) ? 'green' : ''}`}>{statusLabel(s.status, t)}</span>
+                    </div>
+                    {s.name === 'docker' && <p className="docker-app-hint">{s.note || t('dockerInstallHint')}</p>}
+                    {s.name !== 'docker' && s.note && <p style={{gridColumn: '1/-1', margin: 0, fontSize: 12, color: 'var(--muted)'}}>{s.note}</p>}
                     {s.block_reason && <p style={{gridColumn: '1/-1', margin: 0, fontSize: 12, color: 'var(--danger)'}}>{s.block_reason}</p>}
                     <div className="card-actions">
-                      {s.installed && ['nginx', 'apache', 'docker', 'php'].includes(s.name) && (
+                      {s.installed && s.deploy !== 'docker' && ['nginx', 'apache', 'docker'].includes(s.name) && (
                         <>
-                          <button className="btn" onClick={() => act(s, s.status === 'active' ? 'stop' : 'start')}>{s.status === 'active' ? t('stop') : t('start')}</button>
+                          <button className="btn" onClick={() => act(s, (s.status === 'active' || s.status === 'running') ? 'stop' : 'start')}>{(s.status === 'active' || s.status === 'running') ? t('stop') : t('start')}</button>
                           <button className="btn" onClick={() => act(s, 'restart')}>{t('restart')}</button>
                         </>
                       )}
                       {s.can_update && <button className="btn" onClick={() => doUpdate(s)}>{t('updateSoft')}</button>}
-                      {s.can_install && <button className="primary" onClick={() => setInstallDlg(s)}>{t('installSoft')}</button>}
+                      {s.can_install && <button className="primary" onClick={() => setInstallDlg(s)}>{s.deploy === 'docker' ? t('deployDockerApp') : t('installSoft')}</button>}
                       {!s.installed && !s.can_install && s.block_reason && (
                         <button className="btn" disabled title={s.block_reason}>{t('conflictBlocked')}</button>
                       )}
@@ -912,31 +963,43 @@ function InstallDialog({service, onClose, onDone}: {service: Service; onClose: (
     if (m === 'snap') return t('methodSnap')
     return m
   }
+  const isDocker = service.deploy === 'docker'
+  const [hostPort, setHostPort] = useState(service.host_port || '')
   async function submit() {
     setBusy(true); setError('')
     try {
-      await post('/actions', {kind: 'package.install', resource: service.name, options: {method, version}})
+      if (isDocker) {
+        await post('/actions', {kind: 'package.install', resource: service.name, options: {deploy: 'docker', version, host_port: hostPort}})
+      } else {
+        await post('/actions', {kind: 'package.install', resource: service.name, options: {method, version}})
+      }
       onDone()
     } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
   return (
     <div className="modal-back"><div className="modal">
       <button className="close" onClick={onClose}>×</button>
-      <h2>{t('installSoft')} {service.display_name || service.name}</h2>
+      <h2>{isDocker ? t('deployDockerApp') : t('installSoft')} {service.display_name || service.name}</h2>
+      {isDocker && <p style={{margin: 0, fontSize: 13, color: 'var(--muted)'}}>{t('deployDockerNote')} · <code>{service.image}</code></p>}
       {service.conflicts?.length ? <p style={{margin: 0, fontSize: 13, color: 'var(--muted)'}}>互斥：{service.conflicts.join(', ')}</p> : null}
-      <label>{t('installMethod')}
-        <select value={method} onChange={e => setMethod(e.target.value)}>
-          {methods.map(m => <option key={m} value={m}>{methodLabel(m)}</option>)}
-        </select>
-      </label>
-      {service.name === 'php' && service.versions?.length && (
-        <label>{t('phpVersion')}
+      {!isDocker && (
+        <label>{t('installMethod')}
+          <select value={method} onChange={e => setMethod(e.target.value)}>
+            {methods.map(m => <option key={m} value={m}>{methodLabel(m)}</option>)}
+          </select>
+        </label>
+      )}
+      {service.versions?.length && (
+        <label>{service.name === 'php' ? t('phpVersion') : t('version')}
           <select value={version} onChange={e => setVersion(e.target.value)}>
             {service.versions.map(v => <option key={v} value={v}>{v}</option>)}
           </select>
         </label>
       )}
-      {method === 'source' && <p style={{margin: 0, fontSize: 12, color: 'var(--muted)'}}>编译安装可能需要数分钟到数十分钟，进度请在「计划任务」查看。</p>}
+      {isDocker && (
+        <label>{t('hostPort')}<input value={hostPort} onChange={e => setHostPort(e.target.value)} placeholder={service.host_port || '8080'} /></label>
+      )}
+      {!isDocker && method === 'source' && <p style={{margin: 0, fontSize: 12, color: 'var(--muted)'}}>编译安装可能需要数分钟到数十分钟，进度请在「计划任务」查看。</p>}
       {error && <div className="error">{error}</div>}
       <div className="card-actions">
         <button className="btn" onClick={onClose}>{t('cancel')}</button>
@@ -948,7 +1011,7 @@ function InstallDialog({service, onClose, onDone}: {service: Service; onClose: (
 
 /* —— Tasks + Crontab —— */
 function Tasks() {
-  const {t} = useI18n()
+  const {t, lang} = useI18n()
   const [tab, setTab] = useState<'tasks' | 'cron'>('tasks')
   const [tasks, setTasks] = useState<Task[]>([]), [audits, setAudits] = useState<Audit[]>([]), [crons, setCrons] = useState<CronJob[]>([])
   const [schedule, setSchedule] = useState('0 3 * * *'), [command, setCommand] = useState(''), [message, setMessage] = useState(''), [error, setError] = useState('')
@@ -1001,13 +1064,13 @@ function Tasks() {
           <section className="split">
             <div className="panel"><PanelTitle title={t('tasksTitle')} />
               <div className="timeline">
-                {tasks.map(x => <div key={x.id}><span className={`task-dot ${x.status}`} /><div><strong>{x.summary}</strong><small>{new Date(x.created_at).toLocaleString()} / {x.status}</small>{x.log && <pre>{x.log}</pre>}</div></div>)}
+                {tasks.map(x => <div key={x.id}><span className={`task-dot ${x.status}`} /><div><strong>{taskTitle(x, lang)}</strong><small>{new Date(x.created_at).toLocaleString()} / {taskStatusLabel(x.status, t)}</small>{x.log && <pre>{x.log}</pre>}</div></div>)}
                 {!tasks.length && <div className="empty">{t('noData')}</div>}
               </div>
             </div>
             <div className="panel"><PanelTitle title={t('auditTitle')} />
               <div className="timeline">
-                {audits.map(x => <div key={x.id}><span className="task-dot succeeded" /><div><strong>{x.action}</strong><small>{x.actor} / {x.resource}</small><p>{x.detail}</p></div></div>)}
+                {audits.map(x => <div key={x.id}><span className="task-dot succeeded" /><div><strong>{taskTitle({kind: x.action, summary: x.action}, lang)}</strong><small>{x.actor} / {x.resource}</small><p>{x.detail}</p></div></div>)}
                 {!audits.length && <div className="empty">{t('noData')}</div>}
               </div>
             </div>
@@ -1108,7 +1171,7 @@ function Alerts() {
 /* —— Settings (panel domain wizard + security + update) —— */
 function Settings({me, setMe}: {me: Me; setMe: (m: Me) => void}) {
   const {t} = useI18n()
-  const [tab, setTab] = useState<'panel' | 'security' | 'update'>('panel')
+  const [tab, setTab] = useState<'panel' | 'security' | 'entry' | 'update'>(me.must_set_entry ? 'entry' : 'panel')
   return (
     <>
       <PageHead title={t('settings')} />
@@ -1116,13 +1179,57 @@ function Settings({me, setMe}: {me: Me; setMe: (m: Me) => void}) {
         <div className="tabs">
           <button className={tab === 'panel' ? 'active' : ''} onClick={() => setTab('panel')}>{t('settingsTabPanel')}</button>
           <button className={tab === 'security' ? 'active' : ''} onClick={() => setTab('security')}>{t('settingsTabSecurity')}</button>
+          <button className={tab === 'entry' ? 'active' : ''} onClick={() => setTab('entry')}>{t('settingsTabEntry')}</button>
           <button className={tab === 'update' ? 'active' : ''} onClick={() => setTab('update')}>{t('settingsTabUpdate')}</button>
         </div>
         {tab === 'panel' && <PanelDomainWizard />}
         {tab === 'security' && <SecurityBlock me={me} setMe={setMe} />}
+        {tab === 'entry' && <EntrySecurityBlock me={me} setMe={setMe} />}
         {tab === 'update' && <UpdateBlock />}
       </div>
     </>
+  )
+}
+
+function EntrySecurityBlock({me, setMe}: {me: Me; setMe: (m: Me) => void}) {
+  const {t} = useI18n()
+  const [path, setPath] = useState(me.entry_path || '')
+  const [decoy, setDecoy] = useState<'404' | 'dino'>((me.decoy_mode === 'dino' ? 'dino' : '404'))
+  const [message, setMessage] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false)
+  async function save() {
+    setBusy(true); setError(''); setMessage('')
+    try {
+      const v = await post<{entry_path: string; decoy_mode: string; entry_url: string}>('/settings/entry', {path, decoy_mode: decoy})
+      setMe({...me, must_set_entry: false, entry_path: v.entry_path, decoy_mode: v.decoy_mode, entry_url: v.entry_url})
+      setPath(v.entry_path)
+      setMessage(t('entrySaved'))
+    } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
+  }
+  return (
+    <div className="panel" style={{maxWidth: 720}}>
+      <div style={{display: 'flex', gap: 12, alignItems: 'flex-start', marginBottom: 14}}>
+        <LockKeyhole style={{color: 'var(--green)', width: 28, height: 28}} />
+        <div>
+          <h2 style={{margin: '0 0 4px', fontSize: 16}}>{t('entryTitle')}</h2>
+          <p style={{margin: 0, color: 'var(--muted)', fontSize: 13}}>{t('entryDesc')}</p>
+        </div>
+      </div>
+      <label>{t('entryPath')}<input value={path} onChange={e => setPath(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))} placeholder="s8k2m9xq" /><small style={{color: 'var(--muted)'}}>{t('entryPathHint')}</small></label>
+      <label style={{display: 'block', marginTop: 12}}>{t('decoyMode')}
+        <select value={decoy} onChange={e => setDecoy(e.target.value as '404' | 'dino')}>
+          <option value="404">{t('decoy404')}</option>
+          <option value="dino">{t('decoyDino')}</option>
+        </select>
+        <small style={{color: 'var(--muted)', display: 'block', marginTop: 4}}>{t('decoyHint')}</small>
+      </label>
+      {path.length >= 4 && <div className="entry-preview" style={{marginTop: 12}}>{t('entryPreview')}: <code>{location.origin}/{path}</code></div>}
+      <div className="card-actions" style={{marginTop: 14}}>
+        <button className="btn" type="button" onClick={() => setPath(Math.random().toString(36).slice(2, 12))}>{t('randomEntry')}</button>
+        <button className="primary" disabled={busy || path.length < 4} onClick={save}>{busy ? '…' : t('saveEntry')}</button>
+      </div>
+      {message && <div className="success" style={{marginTop: 12}}>{message}</div>}
+      {error && <div className="error banner" style={{marginTop: 12}}>{error}</div>}
+    </div>
   )
 }
 
@@ -1282,6 +1389,82 @@ function Loading() {
   const {t} = useI18n()
   return <div className="loading"><RefreshCw /> {t('loading')}</div>
 }
+
+/** Localize app/service status codes for the UI. */
+function statusLabel(status: string, t: (k: any) => string) {
+  switch (status) {
+    case 'active':
+    case 'running':
+      return t('statusRunning')
+    case 'inactive':
+    case 'stopped':
+      return t('statusStopped')
+    case 'available':
+    case 'installed':
+      return t('statusInstalled')
+    case 'not-installed':
+    case 'missing':
+      return t('statusNotInstalled')
+    default:
+      return status || '-'
+  }
+}
+
+function statusOk(status: string) {
+  return status === 'active' || status === 'running' || status === 'available' || status === 'installed'
+}
+
+function taskStatusLabel(status: string, t: (k: any) => string) {
+  switch (status) {
+    case 'queued': return t('statusQueued')
+    case 'running': return t('statusRunningTask')
+    case 'succeeded': return t('statusSucceeded')
+    case 'failed': return t('statusFailed')
+    case 'rolled_back': return t('statusRolledBack')
+    default: return status
+  }
+}
+
+/** Prefer backend Chinese summary; fall back to localizing kind + resource. */
+function taskTitle(task: {kind: string; summary: string; resource?: string}, lang: string) {
+  // New backend summaries are already Chinese human text (contain · or CJK).
+  if (task.summary && (/[·\u4e00-\u9fff]/.test(task.summary))) return task.summary
+  const labels: Record<string, {zh: string; en: string}> = {
+    'panel.self_update': {zh: '面板更新', en: 'Panel update'},
+    'panel.bind_domain': {zh: '绑定面板域名', en: 'Bind panel domain'},
+    'panel.unbind_domain': {zh: '恢复面板 IP 访问', en: 'Restore IP access'},
+    'web.site.create': {zh: '创建网站', en: 'Create site'},
+    'web.site.configure': {zh: '保存网站设置', en: 'Save site settings'},
+    'web.site.rewrite': {zh: '设置伪静态', en: 'Set rewrite rules'},
+    'web.site.delete': {zh: '删除网站', en: 'Delete site'},
+    'web.apply': {zh: '应用网站配置', en: 'Apply web config'},
+    'cert.issue': {zh: '申请证书', en: 'Issue certificate'},
+    'cert.renew': {zh: '续期证书', en: 'Renew certificate'},
+    'cert.delete': {zh: '删除证书', en: 'Delete certificate'},
+    'package.install': {zh: '安装软件', en: 'Install software'},
+    'package.update': {zh: '更新软件', en: 'Update software'},
+    'files.write': {zh: '保存文件', en: 'Save file'},
+    'files.mkdir': {zh: '新建目录', en: 'Create folder'},
+    'files.delete': {zh: '删除文件', en: 'Delete file'},
+    'files.rename': {zh: '重命名', en: 'Rename'},
+    'crontab.add': {zh: '添加计划任务', en: 'Add cron job'},
+    'crontab.remove': {zh: '删除计划任务', en: 'Remove cron job'},
+    'docker.deploy': {zh: '部署 Docker', en: 'Deploy Docker'},
+    'docker.container.start': {zh: '启动容器', en: 'Start container'},
+    'docker.container.stop': {zh: '停止容器', en: 'Stop container'},
+    'docker.container.restart': {zh: '重启容器', en: 'Restart container'},
+    'docker.container.delete': {zh: '删除容器', en: 'Delete container'},
+    'service.start': {zh: '启动服务', en: 'Start service'},
+    'service.stop': {zh: '停止服务', en: 'Stop service'},
+    'service.restart': {zh: '重启服务', en: 'Restart service'},
+    'notification.configure': {zh: '配置通知', en: 'Configure notifications'},
+  }
+  const L = labels[task.kind]
+  const title = L ? (lang === 'zh' ? L.zh : L.en) : task.kind
+  const rest = (task.summary || '').replace(task.kind, '').trim()
+  return rest ? `${title} ${rest}` : title
+}
+
 function pct(a = 0, b = 0) { return b ? (a / b) * 100 : 0 }
 function num(v = 0) { return Number.isFinite(v) ? v.toFixed(1) : '0.0' }
 function bytes(v = 0) {

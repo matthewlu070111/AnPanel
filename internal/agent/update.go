@@ -81,7 +81,21 @@ func selfUpdate(ctx context.Context, channel string) (ActionResult, error) {
 	if err != nil {
 		return ActionResult{}, fmt.Errorf("update failed: %s", out)
 	}
-	return ActionResult{Output: "update completed via " + channel + " channel\n" + out}, nil
+	// Install script should already restart units; schedule again so even older
+	// install.sh builds still load the new binary after self_update returns.
+	schedulePanelRestart()
+	return ActionResult{Output: "update completed via " + channel + " channel; restarting anpanel-agent and anpanel-web\n" + out}, nil
+}
+
+// schedulePanelRestart reloads both panel units after a short delay so the
+// current action can finish writing its task result first.
+func schedulePanelRestart() {
+	go func() {
+		time.Sleep(2 * time.Second)
+		_ = exec.Command("systemctl", "daemon-reload").Run()
+		// Restart agent last in the same invocation; systemd handles both.
+		_ = exec.Command("systemctl", "restart", "anpanel-agent.service", "anpanel-web.service").Run()
+	}()
 }
 
 func updateInstallURL(channel string) (string, error) {

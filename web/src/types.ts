@@ -30,6 +30,11 @@ export type Service = {
   can_update?: boolean
   block_reason?: string
   note?: string
+  deploy?: string
+  image?: string
+  host_port?: string
+  container_port?: string
+  docker_name?: string
 }
 
 export type RewriteRule = {
@@ -125,6 +130,10 @@ export type Me = {
   must_change: boolean
   csrf_token: string
   totp_enabled: boolean
+  must_set_entry?: boolean
+  entry_path?: string
+  decoy_mode?: string
+  entry_url?: string
 }
 
 export type AlertRule = {

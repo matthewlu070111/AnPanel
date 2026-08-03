@@ -54,7 +54,8 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	s := &server{cfg: cfg, db: db, agent: ac, log: logger, attempts: newLoginLimiter(), alertStates: map[int64]*alertState{}}
 	mux := http.NewServeMux()
 	s.routes(mux)
-	h := &http.Server{Addr: net.JoinHostPort(cfg.Listen, strconv.Itoa(cfg.Port)), Handler: securityHeaders(mux), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 0, IdleTimeout: 60 * time.Second}
+	// Entry path gate wraps all traffic when configured (decoy on bare host access).
+	h := &http.Server{Addr: net.JoinHostPort(cfg.Listen, strconv.Itoa(cfg.Port)), Handler: s.entryGate(securityHeaders(mux)), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 0, IdleTimeout: 60 * time.Second}
 	go s.collect(ctx)
 	go func() {
 		<-ctx.Done()
@@ -99,6 +100,7 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/alerts/rules/update", s.withSession(s.updateAlertRule, true))
 	mux.HandleFunc("/api/v1/alerts/test", s.withSession(s.testNotification, true))
 	mux.HandleFunc("/api/v1/actions", s.withSession(s.action, true))
+	mux.HandleFunc("/api/v1/settings/entry", s.withSession(s.saveEntrySettings, true))
 	dist, _ := fs.Sub(webui.Dist, "dist")
 	files := http.FileServer(http.FS(dist))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -175,7 +177,7 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{Name: "anpanel_session", Value: ss.Token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Expires: ss.ExpiresAt, Secure: r.TLS != nil})
 	_ = s.db.Audit(u.Username, "auth.login", "session", "login succeeded", ip)
-	apiJSON(w, map[string]any{"username": u.Username, "must_change": u.MustChange, "csrf_token": ss.CSRF, "totp_enabled": u.TOTPSecret != ""})
+	apiJSON(w, s.mePayload(u.Username, u.MustChange, ss.CSRF, u.TOTPSecret != ""))
 }
 func (s *server) logout(w http.ResponseWriter, r *http.Request) {
 	ss := current(r)
@@ -186,7 +188,24 @@ func (s *server) logout(w http.ResponseWriter, r *http.Request) {
 }
 func (s *server) me(w http.ResponseWriter, r *http.Request) {
 	ss := current(r)
-	apiJSON(w, map[string]any{"username": ss.User.Username, "must_change": ss.User.MustChange, "csrf_token": ss.CSRF, "totp_enabled": ss.User.TOTPSecret != ""})
+	apiJSON(w, s.mePayload(ss.User.Username, ss.User.MustChange, ss.CSRF, ss.User.TOTPSecret != ""))
+}
+func (s *server) mePayload(username string, mustChange bool, csrf string, totp bool) map[string]any {
+	entry := config.NormalizeEntryPath(s.cfg.EntryPath)
+	decoy := s.cfg.DecoyMode
+	if decoy != "dino" {
+		decoy = "404"
+	}
+	return map[string]any{
+		"username":       username,
+		"must_change":    mustChange,
+		"csrf_token":     csrf,
+		"totp_enabled":   totp,
+		"must_set_entry": entry == "",
+		"entry_path":     entry,
+		"decoy_mode":     decoy,
+		"entry_url":      map[bool]string{true: "/" + entry, false: ""}[entry != ""],
+	}
 }
 func (s *server) changeCredentials(w http.ResponseWriter, r *http.Request) {
 	var in struct{ Username, Password string }
@@ -408,7 +427,7 @@ func (s *server) action(w http.ResponseWriter, r *http.Request) {
 	in.Actor = ss.User.Username
 	id := randomID()
 	now := time.Now()
-	t := domain.Task{ID: id, Kind: in.Kind, Status: "queued", Summary: in.Kind + " " + in.Resource, CreatedAt: now, UpdatedAt: now}
+	t := domain.Task{ID: id, Kind: in.Kind, Status: "queued", Summary: taskSummary(in.Kind, in.Resource, in.Options), CreatedAt: now, UpdatedAt: now}
 	if err := s.db.CreateTask(t); err != nil {
 		apiError(w, 500, err.Error())
 		return
@@ -631,6 +650,67 @@ func remoteIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 func randomID() string { b := make([]byte, 16); _, _ = rand.Read(b); return hex.EncodeToString(b) }
+
+// taskSummary builds a short Chinese-friendly description for the task queue.
+// The UI also localizes kind/status; this summary is stored for audit/history.
+func taskSummary(kind, resource string, opts map[string]string) string {
+	labels := map[string]string{
+		"panel.self_update":        "面板更新",
+		"panel.bind_domain":        "绑定面板域名",
+		"panel.unbind_domain":      "恢复面板 IP 访问",
+		"web.site.create":          "创建网站",
+		"web.site.configure":       "保存网站设置",
+		"web.site.rewrite":         "设置伪静态",
+		"web.site.delete":          "删除网站",
+		"web.apply":                "应用网站配置",
+		"web.reload":               "重载 Web 服务",
+		"cert.issue":               "申请证书",
+		"cert.renew":               "续期证书",
+		"cert.delete":              "删除证书",
+		"package.install":          "安装软件",
+		"package.update":           "更新软件",
+		"files.write":              "保存文件",
+		"files.mkdir":              "新建目录",
+		"files.delete":             "删除文件",
+		"files.rename":             "重命名文件",
+		"crontab.add":              "添加计划任务",
+		"crontab.remove":           "删除计划任务",
+		"docker.deploy":            "部署 Docker 应用",
+		"docker.container.start":   "启动容器",
+		"docker.container.stop":    "停止容器",
+		"docker.container.restart": "重启容器",
+		"docker.container.delete":  "删除容器",
+		"service.start":            "启动服务",
+		"service.stop":             "停止服务",
+		"service.restart":          "重启服务",
+		"notification.configure":   "配置通知",
+	}
+	title := labels[kind]
+	if title == "" {
+		title = kind
+	}
+	target := resource
+	if kind == "panel.self_update" {
+		ch := resource
+		if opts != nil && opts["channel"] != "" {
+			ch = opts["channel"]
+		}
+		if ch == "prerelease" {
+			target = "预发布版"
+		} else if ch == "stable" || ch == "" {
+			target = "正式版"
+		}
+	}
+	if kind == "package.install" || kind == "package.update" {
+		if opts != nil && opts["version"] != "" {
+			target = resource + " " + opts["version"]
+		}
+	}
+	if target == "" || target == "panel" {
+		return title
+	}
+	return title + " · " + target
+}
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")

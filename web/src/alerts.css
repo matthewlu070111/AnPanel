@@ -29,21 +29,55 @@
 
 .terminal-head {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  min-height: 48px;
-  padding: 0 18px;
+  min-height: 44px;
+  padding: 0 14px;
   color: #e5e7eb;
   background: #20232a;
   border-bottom: 1px solid #30343d;
+  flex: none;
 }
-.terminal-dots { display: flex; gap: 6px; }
-.terminal-dots i { width: 10px; height: 10px; border-radius: 50%; background: #ff5f57; }
-.terminal-dots i:nth-child(2) { background: #febc2e; }
-.terminal-dots i:nth-child(3) { background: #28c840; }
-.terminal-head em { color: #9ca3af; font-size: 11px; font-style: normal; }
-.terminal-head em.online { color: #5dd879; }
+.terminal-dots { display: flex; gap: 7px; align-items: center; flex: none; }
+.terminal-dots button,
+.terminal-dots i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 0;
+  padding: 0;
+  display: block;
+  flex: none;
+}
+.terminal-dots .dot-close {
+  background: #ff5f57;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.12);
+}
+.terminal-dots .dot-close:hover { filter: brightness(1.08); }
+.terminal-dots .dot-min { background: #febc2e; pointer-events: none; }
+.terminal-dots .dot-max { background: #28c840; pointer-events: none; }
+.terminal-head strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+.terminal-head em {
+  color: #9ca3af;
+  font-size: 11px;
+  font-style: normal;
+  flex: none;
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #2a2e36;
+}
+.terminal-head em.online { color: #5dd879; background: #1e3326; }
 .terminal-screen {
   flex: 1;
   min-height: 0;
@@ -53,5 +87,5 @@
 }
 .terminal-screen .xterm { height: 100%; }
 .terminal-screen .xterm-viewport { scrollbar-width: thin; }
-.terminal-hint { padding: 9px 18px; color: #7d8592; background: #1b1e24; border-top: 1px solid #30343d; }
-.terminal-modal .close { z-index: 2; color: #9ca3af; top: 7px; }
+.terminal-hint { padding: 9px 18px; color: #7d8592; background: #1b1e24; border-top: 1px solid #30343d; flex: none; }
+.terminal-modal .close { display: none !important; }

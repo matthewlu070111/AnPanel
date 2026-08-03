@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type Config struct {
@@ -19,6 +20,11 @@ type Config struct {
 	Region           string `json:"region"`
 	MetricsInterval  int    `json:"metrics_interval_seconds"`
 	UpdateChannel    string `json:"update_channel"`
+	// EntryPath is the secret panel URL prefix (e.g. "s8k2m9" → http://host:port/s8k2m9).
+	// Empty means not configured yet (must set after login).
+	EntryPath string `json:"entry_path"`
+	// DecoyMode is the public root disguise: "404" or "dino" (no redirects).
+	DecoyMode string `json:"decoy_mode"`
 }
 
 func Default() Config {
@@ -30,6 +36,7 @@ func Default() Config {
 		SessionKeyFile:   "/etc/anpanel/session.key",
 		NotificationPath: "/etc/anpanel/notifications.json",
 		Region:           "auto", MetricsInterval: 5, UpdateChannel: "stable",
+		EntryPath: "", DecoyMode: "404",
 	}
 }
 
@@ -58,7 +65,35 @@ func Load() (Config, error) {
 	if cfg.MetricsInterval < 1 {
 		cfg.MetricsInterval = 5
 	}
+	if cfg.DecoyMode != "dino" {
+		cfg.DecoyMode = "404"
+	}
+	cfg.EntryPath = NormalizeEntryPath(cfg.EntryPath)
 	return cfg, nil
+}
+
+// NormalizeEntryPath strips slashes and rejects unsafe characters.
+func NormalizeEntryPath(p string) string {
+	p = strings.Trim(strings.TrimSpace(p), "/")
+	if p == "" {
+		return ""
+	}
+	// only allow simple path segments
+	for _, c := range p {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' {
+			continue
+		}
+		return ""
+	}
+	if len(p) < 4 || len(p) > 64 {
+		return ""
+	}
+	// reserve common paths
+	switch strings.ToLower(p) {
+	case "api", "assets", "static", "favicon.ico", "robots.txt":
+		return ""
+	}
+	return p
 }
 
 func Save(cfg Config) error {

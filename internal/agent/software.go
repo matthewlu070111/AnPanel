@@ -26,16 +26,19 @@ func installSoftware(ctx context.Context, component string, opts map[string]stri
 	if component == "compose" {
 		return ActionResult{}, errors.New("Docker Compose V2 已包含在 Docker Engine 中，请安装 Docker；无需单独安装 compose")
 	}
+	if component == "php" || component == "3x-ui" || component == "3xui" {
+		return ActionResult{}, errors.New("该应用仅支持 Docker 部署，请在应用商店使用「Docker 部署」")
+	}
 
 	if err := checkSoftwareConflict(component); err != nil {
 		return ActionResult{}, err
 	}
-	if system.IsInstalled(component) && component != "php" {
+	if system.IsInstalled(component) {
 		return ActionResult{}, fmt.Errorf("%s 已安装", component)
 	}
 
 	switch component {
-	case "nginx", "apache", "php", "certbot":
+	case "nginx", "apache", "certbot":
 		if method == "" {
 			method = "source"
 		}
@@ -77,7 +80,7 @@ func installSoftware(ctx context.Context, component string, opts map[string]stri
 func updateSoftware(ctx context.Context, component string, opts map[string]string) (ActionResult, error) {
 	component = strings.ToLower(strings.TrimSpace(component))
 	if component == "compose" {
-		return ActionResult{}, errors.New("compose 随 Docker 更新，请更新 Docker Engine")
+		return ActionResult{}, errors.New("Docker Compose 已包含在 Docker Engine 中，请直接更新 Docker")
 	}
 	if !system.IsInstalled(component) {
 		return ActionResult{}, fmt.Errorf("%s 未安装", component)
@@ -88,26 +91,72 @@ func updateSoftware(ctx context.Context, component string, opts map[string]strin
 		path, _ := system.LookPath("certbot")
 		method = system.CertbotInstallMethod(path)
 	}
+	// Docker: never treat "script" as acme; upgrade packages or re-run get.docker.com.
+	if component == "docker" {
+		return updateDocker(ctx, method)
+	}
 	// Prefer re-running source for compiled stacks; package for package installs.
 	if method == "" {
-		if component == "docker" || component == "acme.sh" {
-			method = map[string]string{"docker": "package", "acme.sh": "script"}[component]
+		if component == "acme.sh" {
+			method = "script"
 		} else {
 			method = "source"
 		}
 	}
 	switch method {
 	case "package":
-		return upgradeFromPackage(ctx, component, version)
+		res, err := upgradeFromPackage(ctx, component, version)
+		if err != nil {
+			return ActionResult{}, err
+		}
+		_ = enableServiceAfterInstall(ctx, component, version)
+		return res, nil
 	case "source":
 		return installFromSource(ctx, component, version) // recompile / reinstall latest
 	case "script":
-		return installAcmeSh(ctx)
+		if component == "acme.sh" {
+			return installAcmeSh(ctx)
+		}
+		return ActionResult{}, fmt.Errorf("%s 不支持 script 更新", component)
 	case "snap":
 		return run(ctx, "snap", "refresh", "certbot")
 	default:
 		return ActionResult{}, fmt.Errorf("unknown update method %q", method)
 	}
+}
+
+func updateDocker(ctx context.Context, method string) (ActionResult, error) {
+	// Prefer package upgrade when docker-ce repo is present; otherwise re-run convenience script.
+	if method == "package" || method == "" || method == "script" {
+		if hasDockerRepo() || method == "package" {
+			if hasDockerRepo() {
+				res, err := upgradeFromPackage(ctx, "docker", "")
+				if err != nil {
+					// fall through to script if packages missing
+					if method == "package" {
+						return ActionResult{}, err
+					}
+				} else {
+					_ = enableServiceAfterInstall(ctx, "docker", "")
+					// ensure compose plugin present
+					if exec.Command("apt-get", "--version").Run() == nil {
+						_, _ = run(ctx, "apt-get", "install", "-y", "docker-compose-plugin")
+					}
+					_ = exec.Command("systemctl", "restart", "docker").Run()
+					ver, _ := run(ctx, "docker", "--version")
+					compose, _ := run(ctx, "docker", "compose", "version")
+					return ActionResult{Output: "docker updated\n" + res.Output + "\n" + ver.Output + "\n" + compose.Output}, nil
+				}
+			}
+		}
+		res, err := installDockerScript(ctx)
+		if err != nil {
+			return ActionResult{}, err
+		}
+		_ = exec.Command("systemctl", "restart", "docker").Run()
+		return ActionResult{Output: "docker updated via get.docker.com\n" + res.Output}, nil
+	}
+	return ActionResult{}, fmt.Errorf("docker 不支持更新方式 %q（请用 package 或 script）", method)
 }
 
 func checkSoftwareConflict(component string) error {
@@ -520,6 +569,83 @@ docker --version
 docker compose version
 `
 	return runShell(ctx, script)
+}
+
+// deployDockerApp installs marketplace apps that only run via Docker.
+func deployDockerApp(ctx context.Context, name string, opts map[string]string) (ActionResult, error) {
+	spec, err := dockerAppSpec(name, opts)
+	if err != nil {
+		return ActionResult{}, err
+	}
+	if _, err := exec.LookPath("docker"); err != nil {
+		return ActionResult{}, errors.New("请先安装 Docker Engine")
+	}
+	// remove old container with same name if exists (recreate)
+	_, _ = run(ctx, "docker", "rm", "-f", spec.name)
+	if _, err := run(ctx, "docker", "pull", spec.image); err != nil {
+		return ActionResult{}, err
+	}
+	args := []string{"run", "-d", "--name", spec.name, "--restart", "unless-stopped", "-p", spec.hostPort + ":" + spec.containerPort}
+	for _, e := range spec.env {
+		args = append(args, "-e", e)
+	}
+	for _, v := range spec.volumes {
+		args = append(args, "-v", v)
+	}
+	args = append(args, spec.image)
+	if len(spec.cmd) > 0 {
+		args = append(args, spec.cmd...)
+	}
+	res, err := run(ctx, "docker", args...)
+	if err != nil {
+		return ActionResult{}, err
+	}
+	return ActionResult{Output: "docker app deployed: " + spec.name + " (" + spec.image + ")\n" + res.Output}, nil
+}
+
+func updateDockerApp(ctx context.Context, name string, opts map[string]string) (ActionResult, error) {
+	// Pull new image and recreate container.
+	return deployDockerApp(ctx, name, opts)
+}
+
+type dockerAppRun struct {
+	name, image, hostPort, containerPort string
+	env, volumes, cmd                    []string
+}
+
+func dockerAppSpec(name string, opts map[string]string) (dockerAppRun, error) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	switch name {
+	case "3x-ui", "3xui":
+		host := opts["host_port"]
+		if host == "" {
+			host = "2053"
+		}
+		return dockerAppRun{
+			name: "anpanel-3x-ui", image: "ghcr.io/mhsanaei/3x-ui:latest",
+			hostPort: host, containerPort: "2053",
+			volumes: []string{"anpanel-3x-ui-data:/etc/x-ui"},
+		}, nil
+	case "php":
+		ver := strings.TrimSpace(opts["version"])
+		if ver == "" {
+			ver = "8.3"
+		}
+		if !phpVersionRe.MatchString(ver) {
+			return dockerAppRun{}, errors.New("php version must be 8.1–8.4")
+		}
+		host := opts["host_port"]
+		if host == "" {
+			host = "9000"
+		}
+		return dockerAppRun{
+			name: "anpanel-php", image: "php:" + ver + "-fpm",
+			hostPort: host, containerPort: "9000",
+			volumes: []string{"/var/www:/var/www"},
+		}, nil
+	default:
+		return dockerAppRun{}, fmt.Errorf("unknown docker app %q", name)
+	}
 }
 
 func runShell(ctx context.Context, script string) (ActionResult, error) {

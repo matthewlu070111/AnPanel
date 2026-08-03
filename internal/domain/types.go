@@ -34,6 +34,12 @@ type DetectedService struct {
 	CanUpdate       bool     `json:"can_update"`
 	BlockReason     string   `json:"block_reason,omitempty"`
 	Note            string   `json:"note,omitempty"`
+	// Deploy: native = host install; docker = one-click container deploy
+	Deploy        string `json:"deploy,omitempty"`
+	Image         string `json:"image,omitempty"`
+	HostPort      string `json:"host_port,omitempty"`
+	ContainerPort string `json:"container_port,omitempty"`
+	DockerName    string `json:"docker_name,omitempty"`
 }
 
 type RewriteRule struct {

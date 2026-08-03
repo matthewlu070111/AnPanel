@@ -110,8 +110,15 @@ func executeAction(ctx context.Context, a ActionRequest) (ActionResult, error) {
 		}
 		return selfUpdate(ctx, ch)
 	case "package.install":
+		// Docker marketplace apps (php, 3x-ui, …) install via container deploy.
+		if a.Options != nil && a.Options["deploy"] == "docker" {
+			return deployDockerApp(ctx, a.Resource, a.Options)
+		}
 		return installSoftware(ctx, a.Resource, a.Options)
 	case "package.update":
+		if a.Options != nil && a.Options["deploy"] == "docker" {
+			return updateDockerApp(ctx, a.Resource, a.Options)
+		}
 		return updateSoftware(ctx, a.Resource, a.Options)
 	case "web.site.rewrite":
 		return setSiteRewrite(ctx, a.Resource, a.Options["rewrite"], a.Options["server"])
