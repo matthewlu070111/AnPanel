@@ -150,6 +150,12 @@ func (s *Store) SetTOTP(secret string) error {
 }
 func (s *Store) DisableTOTP() error { return s.SetTOTP("") }
 
+func (s *Store) TOTPEnabled() bool {
+	var enabled bool
+	_ = s.db.QueryRow("SELECT totp_secret<>'' FROM users WHERE id=1").Scan(&enabled)
+	return enabled
+}
+
 type Session struct {
 	User        User
 	CSRF, Token string

@@ -92,7 +92,6 @@ const zh = {
   terminalHint: '支持 Tab 补全、方向键历史命令和 Ctrl+C',
   connectionClosed: '连接已断开',
   sshHint: '以 root 身份直接管理当前 Linux 主机',
-  sshSecurityHint: '高权限终端，请仅执行确认无误的命令；会话在离开页面时自动断开。',
   staticSite: '静态站点',
   success: '操作已提交',
   domainTask: '域名绑定任务已创建，请到「计划任务」查看进度。',
@@ -305,9 +304,6 @@ const zh = {
   updateStepRestart: '重启服务',
   updateStepLogin: '即将进入登录页',
   updateDoNotClose: '请勿关闭此窗口或刷新页面',
-  displayMode: '显示方式',
-  threeColumns: '一行三个',
-  oneColumn: '一行一个',
   bindWeb: '绑定网页',
   bindWebHint: '创建反向代理网站并转发到',
   webBindQueued: '网页绑定任务已提交，请到计划任务查看进度',
@@ -329,6 +325,13 @@ const zh = {
   lessThan: '低于',
   greaterThan: '高于',
   seconds: '秒',
+  createDockerProject: '新建 Docker 项目',
+  dockerProjectQueued: 'Docker 项目部署任务已提交',
+  dockerImage: 'Docker 镜像',
+  containerName: '容器名称',
+  containerPort: '容器端口',
+  bindDomainOptional: '绑定域名（可选）',
+  create: '创建',
 } as const
 
 
@@ -422,7 +425,6 @@ const en: Record<keyof typeof zh, string> = {
   terminalHint: 'Tab completion, command history arrows, and Ctrl+C are supported',
   connectionClosed: 'connection closed',
   sshHint: 'Manage this Linux host directly as root',
-  sshSecurityHint: 'Privileged terminal. Run only commands you trust; leaving this page closes the session.',
   staticSite: 'Static site',
   success: 'Submitted',
   domainTask: 'Domain binding task created. Check Tasks.',
@@ -635,9 +637,6 @@ const en: Record<keyof typeof zh, string> = {
   updateStepRestart: 'Restart services',
   updateStepLogin: 'Opening sign-in page',
   updateDoNotClose: 'Do not close or refresh this window',
-  displayMode: 'Display mode',
-  threeColumns: 'Three columns',
-  oneColumn: 'One column',
   bindWeb: 'Bind website',
   bindWebHint: 'Create a reverse-proxy site forwarding to',
   webBindQueued: 'Website binding task submitted. Check Tasks for progress.',
@@ -659,6 +658,13 @@ const en: Record<keyof typeof zh, string> = {
   lessThan: 'less than',
   greaterThan: 'greater than',
   seconds: 'seconds',
+  createDockerProject: 'Create Docker project',
+  dockerProjectQueued: 'Docker project deployment queued',
+  dockerImage: 'Docker image',
+  containerName: 'Container name',
+  containerPort: 'Container port',
+  bindDomainOptional: 'Domain (optional)',
+  create: 'Create',
 }
 
 const messages = {zh, en}

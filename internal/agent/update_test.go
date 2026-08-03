@@ -12,3 +12,13 @@ func TestUpdateInstallURL(t *testing.T) {
 		t.Fatal("nightly channel accepted")
 	}
 }
+
+func TestCustomDockerSpec(t *testing.T) {
+	spec, err := dockerAppSpec("custom", map[string]string{"container_name": "my-app", "image": "nginx:alpine", "host_port": "8080", "container_port": "80"})
+	if err != nil || spec.name != "my-app" || spec.replace {
+		t.Fatalf("spec=%+v err=%v", spec, err)
+	}
+	if _, err := dockerAppSpec("custom", map[string]string{"container_name": "bad name", "image": "nginx", "host_port": "8080", "container_port": "80"}); err == nil {
+		t.Fatal("invalid container name accepted")
+	}
+}

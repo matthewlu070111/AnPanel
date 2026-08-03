@@ -8,7 +8,7 @@ import {
   Play, Square, RotateCw, Trash2, Terminal, LockKeyhole, Languages, BellRing,
   Cpu, HardDrive, Database, Plus, FileKey2, FolderOpen, FileText, ChevronUp,
   Pencil, Download, Search, Home, ChevronRight, ShieldCheck, CheckCircle2,
-  KeyRound, Grid3X3, Rows3, Link2, Network,
+  KeyRound, Link2, Network,
 } from 'lucide-react'
 import {api, post, setCSRF} from './api'
 import {I18n, Lang, translator, useI18n} from './i18n'
@@ -56,6 +56,8 @@ function Login({setMe}: {setMe: (m: Me) => void}) {
   const {t, lang, setLang} = useI18n()
   const [username, setUser] = useState('admin'), [password, setPass] = useState(''), [totp, setTotp] = useState('')
   const [error, setError] = useState(''), [busy, setBusy] = useState(false)
+  const [totpEnabled, setTotpEnabled] = useState(false)
+  useEffect(() => { api<{totp_enabled: boolean}>('/auth/config').then(v => setTotpEnabled(v.totp_enabled)).catch(() => {}) }, [])
   async function submit(e: React.FormEvent) {
     e.preventDefault(); setBusy(true); setError('')
     try {
@@ -72,7 +74,7 @@ function Login({setMe}: {setMe: (m: Me) => void}) {
         <p className="subtitle">{t('loginSubtitle')}</p>
         <label>{t('username')}<input value={username} onChange={e => setUser(e.target.value)} autoComplete="username" /></label>
         <label>{t('password')}<input type="password" value={password} onChange={e => setPass(e.target.value)} autoComplete="current-password" autoFocus /></label>
-        <label>{t('totp')}<input inputMode="numeric" maxLength={6} value={totp} onChange={e => setTotp(e.target.value)} /></label>
+        {totpEnabled && <label>{t('totp')}<input inputMode="numeric" maxLength={6} value={totp} onChange={e => setTotp(e.target.value)} /></label>}
         {error && <div className="error">{error}</div>}
         <button className="primary" disabled={busy}>{busy ? '…' : t('login')}</button>
       </form>
@@ -301,8 +303,9 @@ function Spark({data, empty}: {data: Snapshot[]; empty: string}) {
 function DockerPage() {
   const {t} = useI18n()
   const [items, setItems] = useState<Container[]>(() => cached<Container[]>('containers', [])), [terminal, setTerminal] = useState<Container | null>(null)
-  const [error, setError] = useState('')
+  const [error, setError] = useState(''), [customMessage, setCustomMessage] = useState('')
   const [pendingDelete, setPendingDelete] = useState<Container | null>(null)
+  const [customProject, setCustomProject] = useState(false)
   const load = () => api<Container[]>('/docker/containers').then(v => { const next = Array.isArray(v) ? v : []; setItems(next); cache('containers', next); setError('') }).catch(e => setError(e.message))
   useEffect(() => { void load() }, [])
   async function act(c: Container, verb: string) {
@@ -319,9 +322,10 @@ function DockerPage() {
   }
   return (
     <>
-      <PageHead title={t('docker')} action={<button className="btn" onClick={load}><RefreshCw />{t('refresh')}</button>} />
+      <PageHead title={t('docker')} action={<><button className="primary" onClick={() => setCustomProject(true)}><Plus />{t('createDockerProject')}</button><button className="btn" onClick={load}><RefreshCw />{t('refresh')}</button></>} />
       <div className="page-body">
         {error && <div className="error banner">{error}</div>}
+        {customMessage && <div className="success" style={{marginBottom: 12}}>{customMessage}</div>}
         <div className="panel table-panel">
           <table>
             <thead><tr><th>{t('containerCol')}</th><th>{t('image')}</th><th>{t('status')}</th><th>{t('idCol')}</th><th /></tr></thead>
@@ -355,6 +359,7 @@ function DockerPage() {
             onConfirm={() => void confirmDeleteContainer()}
           />
         )}
+        {customProject && <CustomDockerDialog onClose={() => setCustomProject(false)} onQueued={() => { setCustomProject(false); setCustomMessage(t('dockerProjectQueued')); setTimeout(load, 1200) }} />}
       </div>
     </>
   )
@@ -417,9 +422,8 @@ function HostSSH({onClose}: {onClose: () => void}) {
     <PageHead title={t('ssh')} hint={t('sshHint')} />
     <div className="page-body ssh-page">
       <div className="terminal-modal host-terminal">
-        <div className="terminal-head"><span className="terminal-dots"><button type="button" className="dot-close" aria-label={t('close')} onClick={onClose} /><i className="dot-min" /><i className="dot-max" /></span><strong>root@localhost</strong><em className={connected ? 'online' : ''}>{connected ? t('connected') : t('connecting')}</em></div>
+        <div className="terminal-head host-terminal-head"><strong>root@localhost</strong><em className={connected ? 'online' : ''}>{connected ? t('connected') : t('connecting')}</em><button className="host-terminal-close" onClick={onClose}>{t('close')}</button></div>
         <div ref={host} className="terminal-screen" />
-        <small className="terminal-hint">{t('sshSecurityHint')}</small>
       </div>
     </div>
   </>
@@ -941,7 +945,6 @@ function Services() {
   const [progress, setProgress] = useState<{title: string; taskId: string} | null>(null)
   const [bindDlg, setBindDlg] = useState<Service | null>(null)
   const [query, setQuery] = useState('')
-  const [view, setView] = useState<'grid' | 'list'>(() => (localStorage.appView === 'list' ? 'list' : 'grid'))
   const load = () => api<Service[]>('/services').then(v => { const next = Array.isArray(v) ? v : []; setItems(next); cache('services', next); setError('') }).catch(e => setError(e.message))
   useEffect(() => { void load() }, [])
   async function act(s: Service, verb: string) {
@@ -979,14 +982,10 @@ function Services() {
         {message && <div className="success" style={{marginBottom: 12}}>{message}</div>}
         <div className="market-tools">
           <div className="market-search"><Search /><input value={query} onChange={e => setQuery(e.target.value)} placeholder={t('searchApps')} /></div>
-          <div className="view-toggle" aria-label={t('displayMode')}>
-            <button className={view === 'grid' ? 'active' : ''} title={t('threeColumns')} onClick={() => { setView('grid'); localStorage.appView = 'grid' }}><Grid3X3 /></button>
-            <button className={view === 'list' ? 'active' : ''} title={t('oneColumn')} onClick={() => { setView('list'); localStorage.appView = 'list' }}><Rows3 /></button>
-          </div>
         </div>
         <section className="market-section">
           <h2>{t('systemApps')}<small>{t('systemAppsHint')}</small></h2>
-          <div className={`app-grid ${view === 'list' ? 'one-column' : ''}`}>
+          <div className="app-grid">
             {systemApps.map(s => (
                   <div className={`panel service-card ${s.name === 'docker' ? 'docker-app' : ''}`} key={s.name}>
                     <div className="resource">
@@ -1044,6 +1043,10 @@ function Services() {
   )
 }
 
+function queueWebBinding(domain: string, hostPort: string, ssl: boolean, email: string) {
+  return post('/actions', {kind: 'web.site.create', resource: domain, options: {domain, site_type: 'proxy', proxy_pass: `http://127.0.0.1:${hostPort}`, enable_ssl: ssl ? 'true' : 'false', email, tool: 'certbot'}})
+}
+
 function DockerWebDialog({service, onClose, onQueued}: {service: Service; onClose: () => void; onQueued: () => void}) {
   const {t} = useI18n()
   const [domain, setDomain] = useState(''), [ssl, setSSL] = useState(true), [email, setEmail] = useState('')
@@ -1051,7 +1054,7 @@ function DockerWebDialog({service, onClose, onQueued}: {service: Service; onClos
   async function submit() {
     setBusy(true); setError('')
     try {
-      await post('/actions', {kind: 'web.site.create', resource: domain, options: {domain, site_type: 'proxy', proxy_pass: `http://127.0.0.1:${service.host_port}`, enable_ssl: ssl ? 'true' : 'false', email, tool: 'certbot'}})
+      await queueWebBinding(domain, service.host_port || '', ssl, email)
       onQueued()
     } catch (e) { setError((e as Error).message); setBusy(false) }
   }
@@ -1067,6 +1070,32 @@ function DockerWebDialog({service, onClose, onQueued}: {service: Service; onClos
   </div></div>
 }
 
+function CustomDockerDialog({onClose, onQueued}: {onClose: () => void; onQueued: () => void}) {
+  const {t} = useI18n()
+  const [image, setImage] = useState(''), [name, setName] = useState(''), [hostPort, setHostPort] = useState('8080'), [containerPort, setContainerPort] = useState('80')
+  const [domain, setDomain] = useState(''), [ssl, setSSL] = useState(true), [email, setEmail] = useState('')
+  const [busy, setBusy] = useState(false), [error, setError] = useState('')
+  async function submit() {
+    setBusy(true); setError('')
+    try {
+      await post('/actions', {kind: 'package.install', resource: 'custom', options: {deploy: 'docker', image, container_name: name, host_port: hostPort, container_port: containerPort}})
+      if (domain) await queueWebBinding(domain, hostPort, ssl, email)
+      onQueued()
+    } catch (e) { setError((e as Error).message); setBusy(false) }
+  }
+  return <div className="modal-back"><div className="modal">
+    <button className="close" onClick={onClose}>×</button><h2>{t('createDockerProject')}</h2>
+    <label>{t('dockerImage')}<input value={image} onChange={e => setImage(e.target.value)} placeholder="nginx:alpine" /></label>
+    <label>{t('containerName')}<input value={name} onChange={e => setName(e.target.value)} placeholder="my-app" /></label>
+    <div className="port-fields"><label>{t('hostPort')}<input inputMode="numeric" value={hostPort} onChange={e => setHostPort(e.target.value)} /></label><label>{t('containerPort')}<input inputMode="numeric" value={containerPort} onChange={e => setContainerPort(e.target.value)} /></label></div>
+    <label>{t('bindDomainOptional')}<input value={domain} onChange={e => setDomain(e.target.value)} placeholder="app.example.com" /></label>
+    {domain && <label className="check-row"><input type="checkbox" checked={ssl} onChange={e => setSSL(e.target.checked)} />{t('enableSSL')}</label>}
+    {domain && ssl && <label>{t('email')}<input type="email" value={email} onChange={e => setEmail(e.target.value)} /></label>}
+    {error && <div className="error">{error}</div>}
+    <div className="card-actions"><button className="btn" onClick={onClose}>{t('cancel')}</button><button className="primary" disabled={busy || !image || !name || !hostPort || !containerPort} onClick={submit}>{busy ? '…' : t('create')}</button></div>
+  </div></div>
+}
+
 function InstallDialog({service, onClose, onQueued}: {service: Service; onClose: () => void; onQueued: (taskId: string, title: string) => void}) {
   const {t} = useI18n()
   const methods = service.install_methods?.length ? service.install_methods : ['source']
@@ -1076,6 +1105,8 @@ function InstallDialog({service, onClose, onQueued}: {service: Service; onClose:
   const isDocker = service.deploy === 'docker'
   const blocked = !!service.block_reason
   const [hostPort, setHostPort] = useState(service.host_port || '')
+  const [domain, setDomain] = useState(''), [ssl, setSSL] = useState(true), [email, setEmail] = useState('')
+  const webBindable = isDocker && service.name !== 'php'
   function methodLabel(m: string) {
     if (m === 'source') return t('methodSource')
     if (m === 'package') return t('methodPackage')
@@ -1090,6 +1121,7 @@ function InstallDialog({service, onClose, onQueued}: {service: Service; onClose:
       let r: {task_id: string}
       if (isDocker) {
         r = await post('/actions', {kind: 'package.install', resource: service.name, options: {deploy: 'docker', version, host_port: hostPort}})
+        if (webBindable && domain) await queueWebBinding(domain, hostPort, ssl, email)
       } else {
         r = await post('/actions', {kind: 'package.install', resource: service.name, options: {method, version}})
       }
@@ -1124,6 +1156,11 @@ function InstallDialog({service, onClose, onQueued}: {service: Service; onClose:
       {!blocked && isDocker && (
         <label>{t('hostPort')}<input value={hostPort} onChange={e => setHostPort(e.target.value)} placeholder={service.host_port || '8080'} /></label>
       )}
+      {!blocked && webBindable && <>
+        <label>{t('bindDomainOptional')}<input value={domain} onChange={e => setDomain(e.target.value)} placeholder="app.example.com" /></label>
+        {domain && <label className="check-row"><input type="checkbox" checked={ssl} onChange={e => setSSL(e.target.checked)} />{t('enableSSL')}</label>}
+        {domain && ssl && <label>{t('email')}<input type="email" value={email} onChange={e => setEmail(e.target.value)} /></label>}
+      </>}
       {!blocked && !isDocker && method === 'source' && <p style={{margin: 0, fontSize: 12, color: 'var(--muted)'}}>编译安装可能需要数分钟到数十分钟，进度请在本窗口或「计划任务」查看。</p>}
       {error && <div className="error">{error}</div>}
       <div className="card-actions">
@@ -1197,7 +1234,7 @@ function Tasks() {
 
   const loadTasks = () => {
     api<Task[]>('/tasks?limit=10').then(v => setTasks(Array.isArray(v) ? v.slice(0, 10) : [])).catch(() => {})
-    api<Audit[]>('/audits').then(v => setAudits(Array.isArray(v) ? v : [])).catch(() => {})
+    api<Audit[]>('/audits').then(v => setAudits(Array.isArray(v) ? v.slice(0, 10) : [])).catch(() => {})
   }
   const loadCron = () => api<CronJob[]>('/crontab').then(v => { setCrons(Array.isArray(v) ? v : []); setError('') }).catch(e => setError(e.message))
 
@@ -1606,7 +1643,7 @@ function UpdateBlock() {
       </div>
       {!needsUpdate && remote && <div className="success" style={{marginTop: 12}}>{t('alreadyLatest')}</div>}
       {error && <div className="error banner" style={{marginTop: 12}}>{error}</div>}
-      {updating && <UpdateProgressModal channel={channel} target={remote} onDone={() => { setUpdating(false); location.href = '/'; }} />}
+      {updating && <UpdateProgressModal channel={channel} target={remote} onDone={() => { setUpdating(false); void post('/auth/logout', {}).finally(() => { location.href = '/' }) }} />}
     </div>
   )
 }

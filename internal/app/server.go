@@ -74,6 +74,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 
 func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/auth/login", s.login)
+	mux.HandleFunc("/api/v1/auth/config", s.authConfig)
 	mux.HandleFunc("/api/v1/auth/logout", s.withSession(s.logout, false))
 	mux.HandleFunc("/api/v1/me", s.withSession(s.me, false))
 	mux.HandleFunc("/api/v1/me/change", s.withSession(s.changeCredentials, true))
@@ -150,6 +151,10 @@ func (s *server) withSession(next http.HandlerFunc, csrf bool) http.HandlerFunc 
 	}
 }
 func current(r *http.Request) store.Session { return r.Context().Value(sessionKey).(store.Session) }
+
+func (s *server) authConfig(w http.ResponseWriter, r *http.Request) {
+	apiJSON(w, map[string]bool{"totp_enabled": s.db.TOTPEnabled()})
+}
 
 func (s *server) login(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
@@ -355,7 +360,7 @@ func (s *server) tasks(w http.ResponseWriter, r *http.Request) {
 	apiJSON(w, items)
 }
 func (s *server) audits(w http.ResponseWriter, r *http.Request) {
-	items, err := s.db.Audits(100)
+	items, err := s.db.Audits(10)
 	if err != nil {
 		apiError(w, 500, err.Error())
 		return

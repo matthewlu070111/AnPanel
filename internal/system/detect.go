@@ -87,6 +87,10 @@ func dockerCatalogApps(dockerOK bool) []domain.DetectedService {
 			versions:   []string{"8.1", "8.2", "8.3", "8.4"},
 			note:       "通过 Docker 部署 PHP-FPM（非本机编译）",
 		},
+		{name: "uptime-kuma", display: "Uptime Kuma", group: "apps", image: "louislam/uptime-kuma:1", hostPort: "3001", containerPort: "3001", dockerName: "anpanel-uptime-kuma", note: "网站与服务状态监控"},
+		{name: "adminer", display: "Adminer", group: "apps", image: "adminer:latest", hostPort: "8081", containerPort: "8080", dockerName: "anpanel-adminer", note: "轻量数据库管理工具"},
+		{name: "dozzle", display: "Dozzle", group: "apps", image: "amir20/dozzle:latest", hostPort: "8082", containerPort: "8080", dockerName: "anpanel-dozzle", note: "实时查看 Docker 容器日志"},
+		{name: "nginx-web", display: "Nginx Web", group: "apps", image: "nginx:alpine", hostPort: "8080", containerPort: "80", dockerName: "anpanel-nginx-web", note: "独立的容器化 Web 服务"},
 	}
 	out := make([]domain.DetectedService, 0, len(items))
 	for _, it := range items {

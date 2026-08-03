@@ -8,13 +8,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/matthewlu070111/anpanel/internal/system"
 )
 
-var phpVersionRe = regexp.MustCompile(`^8\.[1-4]$`)
+var (
+	phpVersionRe      = regexp.MustCompile(`^8\.[1-4]$`)
+	customContainerRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$`)
+)
 
 // installSoftware installs a component with mutual exclusion and method selection.
 // method: source (default for nginx/apache/php/certbot), package, script (Docker/acme.sh)
@@ -577,6 +581,9 @@ func deployDockerApp(ctx context.Context, name string, opts map[string]string) (
 	if err != nil {
 		return ActionResult{}, err
 	}
+	if port(spec.hostPort, "") == "" || port(spec.containerPort, "") == "" {
+		return ActionResult{}, errors.New("ports must be between 1 and 65535")
+	}
 	if _, err := exec.LookPath("docker"); err != nil {
 		return ActionResult{}, errors.New("请先安装 Docker Engine")
 	}
@@ -587,11 +594,13 @@ func deployDockerApp(ctx context.Context, name string, opts map[string]string) (
 	log.WriteString("容器: " + spec.name + "\n")
 	log.WriteString("端口: " + spec.hostPort + " → " + spec.containerPort + "\n\n")
 
-	log.WriteString("[1/3] 清理同名旧容器（如有）…\n")
-	if res, err := run(ctx, "docker", "rm", "-f", spec.name); err != nil {
-		log.WriteString("  (无旧容器或已清理)\n")
-	} else if res.Output != "" {
-		log.WriteString(res.Output + "\n")
+	if spec.replace {
+		log.WriteString("[1/3] 清理同名旧容器（如有）…\n")
+		if res, err := run(ctx, "docker", "rm", "-f", spec.name); err != nil {
+			log.WriteString("  (无旧容器或已清理)\n")
+		} else if res.Output != "" {
+			log.WriteString(res.Output + "\n")
+		}
 	}
 
 	log.WriteString("[2/3] 拉取镜像 " + spec.image + " …\n")
@@ -632,6 +641,7 @@ type dockerAppRun struct {
 	name, image, hostPort, containerPort string
 	env, volumes, cmd                    []string
 	postInfo                             string
+	replace                              bool
 }
 
 func dockerAppSpec(name string, opts map[string]string) (dockerAppRun, error) {
@@ -653,6 +663,7 @@ func dockerAppSpec(name string, opts map[string]string) (dockerAppRun, error) {
 			hostPort: host, containerPort: "2053",
 			volumes:  []string{"anpanel-3x-ui-data:/etc/x-ui"},
 			postInfo: info,
+			replace:  true,
 		}, nil
 	case "php":
 		ver := strings.TrimSpace(opts["version"])
@@ -677,10 +688,40 @@ FPM 监听: 宿主机 %s → 容器 9000
 			hostPort: host, containerPort: "9000",
 			volumes:  []string{"/var/www:/var/www"},
 			postInfo: info,
+			replace:  true,
 		}, nil
+	case "uptime-kuma":
+		return dockerAppRun{name: "anpanel-uptime-kuma", image: "louislam/uptime-kuma:1", hostPort: port(opts["host_port"], "3001"), containerPort: "3001", volumes: []string{"anpanel-uptime-kuma-data:/app/data"}, postInfo: "访问部署时设置的宿主机端口，首次打开后创建管理员账号。\n", replace: true}, nil
+	case "adminer":
+		return dockerAppRun{name: "anpanel-adminer", image: "adminer:latest", hostPort: port(opts["host_port"], "8081"), containerPort: "8080", postInfo: "打开访问地址后填写数据库连接信息。\n", replace: true}, nil
+	case "dozzle":
+		return dockerAppRun{name: "anpanel-dozzle", image: "amir20/dozzle:latest", hostPort: port(opts["host_port"], "8082"), containerPort: "8080", volumes: []string{"/var/run/docker.sock:/var/run/docker.sock:ro"}, postInfo: "打开访问地址即可查看容器日志。\n", replace: true}, nil
+	case "nginx-web":
+		return dockerAppRun{name: "anpanel-nginx-web", image: "nginx:alpine", hostPort: port(opts["host_port"], "8080"), containerPort: "80", postInfo: "Nginx 容器已启动。\n", replace: true}, nil
+	case "custom":
+		container, image := strings.TrimSpace(opts["container_name"]), strings.TrimSpace(opts["image"])
+		if !customContainerRe.MatchString(container) || !safeID.MatchString(image) {
+			return dockerAppRun{}, errors.New("invalid container name or image")
+		}
+		host, target := port(opts["host_port"], ""), port(opts["container_port"], "")
+		if host == "" || target == "" {
+			return dockerAppRun{}, errors.New("ports must be between 1 and 65535")
+		}
+		return dockerAppRun{name: container, image: image, hostPort: host, containerPort: target, postInfo: "自建 Docker 项目已启动。\n"}, nil
 	default:
 		return dockerAppRun{}, fmt.Errorf("unknown docker app %q", name)
 	}
+}
+
+func port(value, fallback string) string {
+	if value == "" {
+		value = fallback
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 1 || n > 65535 {
+		return ""
+	}
+	return strconv.Itoa(n)
 }
 
 func runShell(ctx context.Context, script string) (ActionResult, error) {
