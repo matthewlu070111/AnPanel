@@ -1,5 +1,8 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react'
 import {createRoot} from 'react-dom/client'
+import {Terminal as XTerm} from '@xterm/xterm'
+import {FitAddon} from '@xterm/addon-fit'
+import '@xterm/xterm/css/xterm.css'
 import {
   Activity, Box, Globe2, ServerCog, ListChecks, Settings2, LogOut, RefreshCw,
   Play, Square, RotateCw, Trash2, Terminal, LockKeyhole, Languages, BellRing,
@@ -16,6 +19,11 @@ import './style.css'
 import './alerts.css'
 
 type Page = 'dashboard' | 'docker' | 'websites' | 'files' | 'services' | 'tasks' | 'alerts' | 'settings'
+
+const pagePaths: Record<Page, string> = {dashboard: '/', docker: '/docker', websites: '/website', files: '/files', services: '/apps', tasks: '/tasks', alerts: '/alerts', settings: '/settings'}
+function pageFromPath(path: string): Page {
+  return (Object.entries(pagePaths).find(([, value]) => value === path)?.[0] as Page) || 'dashboard'
+}
 
 function cached<T>(key: string, fallback: T): T {
   try { return JSON.parse(sessionStorage.getItem(key) || '') as T } catch { return fallback }
@@ -79,7 +87,9 @@ const nav: [Page, React.ElementType, 'dashboard' | 'docker' | 'websites' | 'file
 
 function Shell({me, setMe}: {me: Me; setMe: (m: Me | null) => void}) {
   const {t, lang, setLang} = useI18n()
-  const [page, setPage] = useState<Page>('dashboard')
+  const [page, setPage] = useState<Page>(() => pageFromPath(location.pathname))
+  useEffect(() => { const pop = () => setPage(pageFromPath(location.pathname)); addEventListener('popstate', pop); return () => removeEventListener('popstate', pop) }, [])
+  function navigate(next: Page) { if (next !== page) history.pushState({}, '', pagePaths[next]); setPage(next) }
   async function logout() { try { await post('/auth/logout', {}) } catch { /* */ } setMe(null) }
   return (
     <div className="shell">
@@ -87,7 +97,7 @@ function Shell({me, setMe}: {me: Me; setMe: (m: Me | null) => void}) {
         <div className="brand"><span className="brandmark"><Activity /></span><span>AnPanel</span></div>
         <nav>
           {nav.map(([id, Icon, label]) => (
-            <button key={id} className={page === id ? 'active' : ''} onClick={() => setPage(id)}>
+            <button key={id} className={page === id ? 'active' : ''} onClick={() => navigate(id)}>
               <Icon /><span>{t(label)}</span>
             </button>
           ))}
@@ -100,7 +110,7 @@ function Shell({me, setMe}: {me: Me; setMe: (m: Me | null) => void}) {
       </aside>
       <main className="content">
         {me.must_change && <FirstLogin me={me} setMe={setMe} />}
-        {page === 'dashboard' && <Dashboard goSettings={() => setPage('settings')} />}
+        {page === 'dashboard' && <Dashboard goSettings={() => navigate('settings')} />}
         {page === 'docker' && <DockerPage />}
         {page === 'websites' && <Websites />}
         {page === 'files' && <FilesPage />}
@@ -156,7 +166,12 @@ function Dashboard({goSettings}: {goSettings: () => void}) {
       try {
         const m = JSON.parse(e.data) as Snapshot
         setData(v => { const next = v ? {...v, snapshot: m} : v; if (next) cache('overview', next); return next })
-        setHistory(v => { const next = [...v.slice(-239), m]; cache('metrics24h', next); return next })
+        setHistory(v => {
+          const last = v[v.length - 1]
+          const sameMinute = last && Math.floor(new Date(last.time).getTime() / 60000) === Math.floor(new Date(m.time).getTime() / 60000)
+          const next = (sameMinute ? [...v.slice(0, -1), m] : [...v, m]).filter(x => new Date(x.time).getTime() >= Date.now() - 24 * 60 * 60 * 1000).slice(-1441)
+          cache('metrics24h', next); return next
+        })
       } catch { /* */ }
     }
     return () => { cancelled = true; ws.close() }
@@ -205,18 +220,21 @@ function Spark({data, empty}: {data: Snapshot[]; empty: string}) {
   const [hover, setHover] = useState<number | null>(null)
   if (data.length < 2) return <div className="empty">{empty}</div>
   const values = data.map(x => x.cpu_percent || 0), max = Math.max(100, ...values), w = 800, h = 200
-  const points = values.map((v, i) => `${(i / (values.length - 1)) * w},${h - (v / max) * h}`).join(' ')
+  const end = Date.now(), start = end - 24 * 60 * 60 * 1000
+  const xAt = (item: Snapshot) => Math.max(0, Math.min(w, ((new Date(item.time).getTime() - start) / (end - start)) * w))
+  const points = data.map((item, i) => `${xAt(item)},${h - (values[i] / max) * h}`).join(' ')
   const active = hover == null ? null : data[hover]
-  const x = hover == null ? 0 : (hover / (data.length - 1)) * w
+  const x = hover == null ? 0 : xAt(data[hover])
   return (
     <div className="chart-wrap">
-      <svg className="chart" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" onMouseLeave={() => setHover(null)} onMouseMove={e => { const r = e.currentTarget.getBoundingClientRect(); setHover(Math.max(0, Math.min(data.length - 1, Math.round(((e.clientX - r.left) / r.width) * (data.length - 1))))) }}>
+      <svg className="chart" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" onMouseLeave={() => setHover(null)} onMouseMove={e => { const r = e.currentTarget.getBoundingClientRect(); const target = start + ((e.clientX - r.left) / r.width) * (end - start); let best = 0; data.forEach((item, i) => { if (Math.abs(new Date(item.time).getTime() - target) < Math.abs(new Date(data[best].time).getTime() - target)) best = i }); setHover(best) }}>
         <defs><linearGradient id="fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#20a53a" stopOpacity=".28" /><stop offset="1" stopColor="#20a53a" stopOpacity="0" /></linearGradient></defs>
         <polygon points={`0,${h} ${points} ${w},${h}`} fill="url(#fill)" />
         <polyline points={points} fill="none" stroke="#20a53a" strokeWidth="2.5" vectorEffect="non-scaling-stroke" />
         {active && <><line x1={x} x2={x} y1="0" y2={h} className="chart-guide" vectorEffect="non-scaling-stroke" /><circle cx={x} cy={h - ((active.cpu_percent || 0) / max) * h} r="5" className="chart-point" vectorEffect="non-scaling-stroke" /></>}
       </svg>
-      {active && <div className="chart-tip" style={{left: `${Math.max(10, Math.min(90, (hover! / (data.length - 1)) * 100))}%`}}><strong>{new Date(active.time).toLocaleString()}</strong><span>CPU {num(active.cpu_percent)}%</span><span>{t('memory')} {num(pct(active.memory_used, active.memory_total))}%</span><span>Load {num(active.load1)}</span></div>}
+      <div className="chart-axis"><span>{new Date(start).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}</span><span>-12h</span><span>{t('now')}</span></div>
+      {active && <div className="chart-tip" style={{left: `${Math.max(10, Math.min(90, (x / w) * 100))}%`}}><strong>{new Date(active.time).toLocaleString()}</strong><span>CPU {num(active.cpu_percent)}%</span><span>{t('memory')} {num(pct(active.memory_used, active.memory_total))}%</span><span>Load {num(active.load1)}</span></div>}
     </div>
   )
 }
@@ -268,34 +286,27 @@ function DockerPage() {
 
 function ContainerTerminal({container, onClose}: {container: Container; onClose: () => void}) {
   const {t} = useI18n()
-  const [output, setOutput] = useState(''), [socket, setSocket] = useState<WebSocket | null>(null), [connected, setConnected] = useState(false)
-  const screen = useRef<HTMLDivElement>(null)
+  const [connected, setConnected] = useState(false)
+  const host = useRef<HTMLDivElement>(null)
   useEffect(() => {
+    if (!host.current) return
+    const terminal = new XTerm({cursorBlink: true, convertEol: true, fontFamily: '"Cascadia Mono", Consolas, monospace', fontSize: 13, scrollback: 5000, theme: {background: '#15171c', foreground: '#d4d4d4', cursor: '#67c77a', selectionBackground: '#3b82f655'}})
+    const fit = new FitAddon()
+    terminal.loadAddon(fit); terminal.open(host.current); fit.fit()
     const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/v1/ws/docker/terminal?id=${encodeURIComponent(container.id)}`)
     ws.binaryType = 'arraybuffer'
-    ws.onopen = () => setConnected(true)
-    ws.onmessage = e => { const raw = typeof e.data === 'string' ? e.data : new TextDecoder().decode(e.data); const chunk = raw.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, ''); setOutput(v => (v + chunk).slice(-100000)) }
-    ws.onclose = () => { setConnected(false); setOutput(v => v + '\n[connection closed]\n') }
-    setSocket(ws)
-    return () => ws.close()
+    ws.onopen = () => { setConnected(true); terminal.focus() }
+    ws.onmessage = e => terminal.write(typeof e.data === 'string' ? e.data : new Uint8Array(e.data))
+    ws.onclose = () => { setConnected(false); terminal.writeln('\r\n[connection closed]') }
+    const input = terminal.onData(data => { if (ws.readyState === WebSocket.OPEN) ws.send(data) })
+    const resize = new ResizeObserver(() => fit.fit()); resize.observe(host.current)
+    return () => { resize.disconnect(); input.dispose(); ws.close(); terminal.dispose() }
   }, [container.id])
-  useEffect(() => { if (screen.current) screen.current.scrollTop = screen.current.scrollHeight }, [output])
-  function key(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (socket?.readyState !== WebSocket.OPEN) return
-    const special: Record<string, string> = {Enter: '\r', Tab: '\t', Backspace: '\x7f', ArrowUp: '\x1b[A', ArrowDown: '\x1b[B', ArrowRight: '\x1b[C', ArrowLeft: '\x1b[D', Escape: '\x1b'}
-    let value = special[e.key]
-    if (e.ctrlKey && /^[a-z]$/i.test(e.key)) value = String.fromCharCode(e.key.toUpperCase().charCodeAt(0) - 64)
-    if (!value && e.key.length === 1 && !e.ctrlKey && !e.metaKey) value = e.key
-    if (value) { e.preventDefault(); socket.send(value) }
-  }
   return (
     <div className="modal-back"><div className="modal terminal-modal">
       <button className="close" onClick={onClose}>×</button>
       <div className="terminal-head"><span className="terminal-dots"><i /><i /><i /></span><strong>{container.names?.[0]?.replace('/', '') || container.id.slice(0, 12)}</strong><em className={connected ? 'online' : ''}>{connected ? t('connected') : t('connecting')}</em></div>
-      <div ref={screen} className="terminal-screen" onClick={e => e.currentTarget.querySelector('input')?.focus()}>
-        <pre>{output || t('connecting')}</pre>
-        <input autoFocus aria-label={t('terminal')} onKeyDown={key} onPaste={e => { e.preventDefault(); if (socket?.readyState === WebSocket.OPEN) socket.send(e.clipboardData.getData('text')) }} />
-      </div>
+      <div ref={host} className="terminal-screen" />
       <small className="terminal-hint">{t('terminalHint')}</small>
     </div></div>
   )
@@ -306,7 +317,7 @@ function Websites() {
   const {t} = useI18n()
   const [tab, setTab] = useState<'sites' | 'certs'>('sites')
   const [items, setItems] = useState<Website[]>(() => cached<Website[]>('websites', [])), [certs, setCerts] = useState<Certificate[]>(() => cached<Certificate[]>('certificates', []))
-  const [edit, setEdit] = useState<{path: string; content: string; title: string} | null>(null)
+  const [edit, setEdit] = useState<{path: string; content: string; title: string; kind: 'config' | 'file'} | null>(null)
   const [wizard, setWizard] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState('')
   const loadSites = () => api<Website[]>('/websites').then(v => { const next = Array.isArray(v) ? v : []; setItems(next); cache('websites', next); setError('') }).catch(e => setError(e.message))
   const loadCerts = () => api<Certificate[]>('/certificates').then(v => { const next = Array.isArray(v) ? v : []; setCerts(next); cache('certificates', next); setError('') }).catch(e => setError(e.message))
@@ -316,13 +327,22 @@ function Websites() {
   async function openConfig(s: Website) {
     try {
       const r = await api<{path: string; content: string}>(`/websites/config?path=${encodeURIComponent(s.source_path)}`)
-      setEdit({path: r.path, content: r.content, title: s.domains?.[0] || s.name})
+      setEdit({path: r.path, content: r.content, title: s.domains?.[0] || s.name, kind: 'config'})
+    } catch (e) { setError((e as Error).message) }
+  }
+  async function openContent(s: Website) {
+    if (!s.doc_root) return
+    const path = `${s.doc_root.replace(/\/$/, '')}/index.html`
+    try {
+      const r = await api<{content: string}>(`/files/content?path=${encodeURIComponent(path)}`)
+      setEdit({path, content: r.content, title: t('editContent'), kind: 'file'})
     } catch (e) { setError((e as Error).message) }
   }
   async function applyConfig() {
     if (!edit) return
-    await post('/actions', {kind: 'web.apply', resource: edit.path, options: {content: edit.content}})
-    setEdit(null); setMessage(t('success')); setTimeout(loadSites, 1200)
+    await post('/actions', {kind: edit.kind === 'config' ? 'web.apply' : 'files.write', resource: edit.path, options: {content: edit.content}})
+    setEdit(null); setMessage(t('success'))
+    if (edit.kind === 'config') setTimeout(loadSites, 1200)
   }
   async function issueSSL(site: Website) {
     const domain = site.domains?.[0]; if (!domain) return
@@ -367,7 +387,7 @@ function Websites() {
   return (
     <>
       <PageHead title={t('websites')} action={<div className="toolbar">
-        {tab === 'sites' && <button className="primary" onClick={() => setWizard(true)}><Plus size={16} />{t('addSite')}</button>}
+        {tab === 'sites' && <button className="primary add-site-btn" onClick={() => setWizard(true)}><Plus size={16} />{t('addSite')}</button>}
         {tab === 'certs' && <button className="btn" onClick={() => renew('', false)}><RefreshCw />{t('renewAll')}</button>}
         <button className="btn" onClick={load}><RefreshCw />{t('refresh')}</button>
       </div>} />
@@ -401,6 +421,7 @@ function Websites() {
                         <div className="site-ops">
                           {s.domains?.[0] && !(s.has_https || s.tls) && <button className="btn" onClick={() => issueSSL(s)}><FileKey2 size={14} />{t('issueSSL')}</button>}
                           {s.source_path.includes('anpanel-site-') && <button className="btn" onClick={() => setRewrite(s)}>{t('setRewrite')}</button>}
+                          {s.doc_root && <button className="btn" onClick={() => openContent(s)}><Pencil size={14} />{t('editContent')}</button>}
                           <button className="btn" onClick={() => openConfig(s)}>{t('advancedConfig')}</button>
                           {s.source_path.includes('anpanel-site-') && <button className="btn" onClick={() => deleteSite(s)}>{t('deleteSite')}</button>}
                         </div>
@@ -648,7 +669,9 @@ function Services() {
     } catch (e) { setError((e as Error).message) }
   }
   const q = query.trim().toLowerCase()
-  const systemApps = items.filter(s => !q || `${s.name} ${s.display_name || ''}`.toLowerCase().includes(q))
+  const systemApps = items
+    .filter(s => !q || `${s.name} ${s.display_name || ''}`.toLowerCase().includes(q))
+    .sort((a, b) => Number(b.name === 'docker') - Number(a.name === 'docker'))
   return (
     <>
       <PageHead title={t('services')} hint={t('appStoreHint')} action={<button className="btn" onClick={load}><RefreshCw />{t('refresh')}</button>} />
@@ -662,7 +685,7 @@ function Services() {
           <h2>{t('systemApps')}<small>{t('systemAppsHint')}</small></h2>
           <div className="app-grid">
             {systemApps.map(s => (
-                  <div className="panel service-card" key={s.name}>
+                  <div className={`panel service-card ${s.name === 'docker' ? 'docker-app' : ''}`} key={s.name}>
                     <div className="resource">
                       <span className="cube"><ServerCog /></span>
                       <div>
@@ -671,6 +694,7 @@ function Services() {
                       </div>
                     </div>
                     <span className={`pill ${s.status === 'active' || s.status === 'available' ? 'green' : ''}`}>{s.status}</span>
+                    {s.name === 'docker' && <p className="docker-app-hint">{t('dockerInstallHint')}</p>}
                     {s.note && <p style={{gridColumn: '1/-1', margin: 0, fontSize: 12, color: 'var(--muted)'}}>{s.note}</p>}
                     {s.block_reason && <p style={{gridColumn: '1/-1', margin: 0, fontSize: 12, color: 'var(--danger)'}}>{s.block_reason}</p>}
                     <div className="card-actions">
@@ -756,6 +780,15 @@ function Tasks() {
   const [tab, setTab] = useState<'tasks' | 'cron'>('tasks')
   const [tasks, setTasks] = useState<Task[]>([]), [audits, setAudits] = useState<Audit[]>([]), [crons, setCrons] = useState<CronJob[]>([])
   const [schedule, setSchedule] = useState('0 3 * * *'), [command, setCommand] = useState(''), [message, setMessage] = useState(''), [error, setError] = useState('')
+  const [cronMode, setCronMode] = useState<'simple' | 'advanced'>('simple')
+  const [cronUnit, setCronUnit] = useState<'minutes' | 'hours' | 'daily'>('minutes')
+  const [cronEvery, setCronEvery] = useState(5), [cronTime, setCronTime] = useState('03:00')
+  const simpleSchedule = cronUnit === 'minutes'
+    ? `*/${Math.max(1, Math.min(59, cronEvery || 1))} * * * *`
+    : cronUnit === 'hours'
+      ? `0 */${Math.max(1, Math.min(23, cronEvery || 1))} * * *`
+      : `${Number(cronTime.split(':')[1] || 0)} ${Number(cronTime.split(':')[0] || 0)} * * *`
+  const cronSchedule = cronMode === 'simple' ? simpleSchedule : schedule
 
   const loadTasks = () => {
     api<Task[]>('/tasks').then(v => setTasks(Array.isArray(v) ? v : [])).catch(() => {})
@@ -771,7 +804,7 @@ function Tasks() {
 
   async function addCron() {
     try {
-      await post('/actions', {kind: 'crontab.add', resource: 'root', options: {schedule, command}})
+      await post('/actions', {kind: 'crontab.add', resource: 'root', options: {schedule: cronSchedule, command}})
       setMessage(t('cronAdded')); setCommand(''); setTimeout(loadCron, 800)
     } catch (e) { setError((e as Error).message) }
   }
@@ -813,8 +846,15 @@ function Tasks() {
           <div className="stack">
             <div className="panel alert-form">
               <PanelTitle title={t('addCron')} />
-              <p style={{margin: 0, color: 'var(--muted)', fontSize: 13}}>{t('cronHint')}</p>
-              <label>{t('cronSchedule')}<input value={schedule} onChange={e => setSchedule(e.target.value)} placeholder="0 3 * * *" /></label>
+              <div className="cron-mode"><button className={cronMode === 'simple' ? 'active' : ''} onClick={() => setCronMode('simple')}>{t('simpleMode')}</button><button className={cronMode === 'advanced' ? 'active' : ''} onClick={() => setCronMode('advanced')}>{t('advancedMode')}</button></div>
+              {cronMode === 'simple' ? <>
+                <div className="cron-simple">
+                  <select value={cronUnit} onChange={e => setCronUnit(e.target.value as 'minutes' | 'hours' | 'daily')}><option value="minutes">{t('minutesUnit')}</option><option value="hours">{t('hoursUnit')}</option><option value="daily">{t('dailyAt')}</option></select>
+                  {cronUnit === 'daily' ? <input type="time" value={cronTime} onChange={e => setCronTime(e.target.value)} /> : <input type="number" min="1" max={cronUnit === 'minutes' ? 59 : 23} value={cronEvery} onChange={e => setCronEvery(Number(e.target.value))} />}
+                </div>
+                <small className="cron-note">{t('cronNoSeconds')}</small>
+              </> : <><p style={{margin: 0, color: 'var(--muted)', fontSize: 13}}>{t('cronHint')}</p><label>{t('cronSchedule')}<input value={schedule} onChange={e => setSchedule(e.target.value)} placeholder="0 3 * * *" /></label></>}
+              <div className="cron-preview">{t('cronPreview')}: <code>{cronSchedule}</code></div>
               <label>{t('cronCommand')}<input value={command} onChange={e => setCommand(e.target.value)} placeholder="/usr/bin/example" /></label>
               <button className="primary" disabled={!command.trim()} onClick={addCron}>{t('addCron')}</button>
             </div>

@@ -17,7 +17,7 @@ import (
 var phpVersionRe = regexp.MustCompile(`^8\.[1-4]$`)
 
 // installSoftware installs a component with mutual exclusion and method selection.
-// method: source (default for nginx/apache/php/certbot), package, script (acme.sh)
+// method: source (default for nginx/apache/php/certbot), package, script (Docker/acme.sh)
 func installSoftware(ctx context.Context, component string, opts map[string]string) (ActionResult, error) {
 	component = strings.ToLower(strings.TrimSpace(component))
 	method := strings.ToLower(strings.TrimSpace(opts["method"]))
@@ -45,7 +45,7 @@ func installSoftware(ctx context.Context, component string, opts map[string]stri
 		}
 	case "docker":
 		if method == "" {
-			method = "package"
+			method = "script"
 		}
 	default:
 		return ActionResult{}, fmt.Errorf("unsupported component %q", component)
@@ -62,8 +62,11 @@ func installSoftware(ctx context.Context, component string, opts map[string]stri
 		}
 		return installCertbotSnap(ctx)
 	case "script":
+		if component == "docker" {
+			return installDockerScript(ctx)
+		}
 		if component != "acme.sh" {
-			return ActionResult{}, errors.New("script method is only valid for acme.sh")
+			return ActionResult{}, errors.New("script method is only valid for docker or acme.sh")
 		}
 		return installAcmeSh(ctx)
 	default:
@@ -502,6 +505,19 @@ export HOME=/root
 curl -fsSL https://get.acme.sh | sh -s email=anpanel@localhost
 ln -sfn /root/.acme.sh/acme.sh /usr/local/bin/acme.sh
 acme.sh --version || /root/.acme.sh/acme.sh --version
+`
+	return runShell(ctx, script)
+}
+
+func installDockerScript(ctx context.Context) (ActionResult, error) {
+	script := `set -euo pipefail
+tmp=/tmp/anpanel-get-docker.sh
+trap 'rm -f "$tmp"' EXIT
+curl -fsSL https://get.docker.com -o "$tmp"
+sh "$tmp"
+systemctl enable --now docker
+docker --version
+docker compose version
 `
 	return runShell(ctx, script)
 }

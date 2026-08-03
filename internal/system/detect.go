@@ -41,7 +41,7 @@ func DetectServices() []domain.DetectedService {
 	out := []domain.DetectedService{
 		soft("nginx", "Nginx", "web", []string{"apache"}, []string{"source", "package"}, "source", nil, nginxOK, nginxPath, "/etc/nginx/nginx.conf", serviceUnitStatus("nginx"), installed),
 		soft("apache", "Apache", "web", []string{"nginx"}, []string{"source", "package"}, "source", nil, apacheOK, apachePath, apacheConfig(), serviceUnitStatusApache(), installed),
-		soft("docker", "Docker Engine", "container", nil, []string{"package"}, "package", nil, dockerOK, dockerPath, "/etc/docker/daemon.json", serviceUnitStatus("docker"), installed),
+		soft("docker", "Docker Engine", "container", nil, []string{"script", "package"}, "script", nil, dockerOK, dockerPath, "/etc/docker/daemon.json", serviceUnitStatus("docker"), installed),
 		{
 			Name: "compose", DisplayName: "Docker Compose", Group: "container",
 			Installed: composeOK, Path: composePath, Version: composeVer,

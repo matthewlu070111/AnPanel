@@ -47,25 +47,11 @@
 .terminal-screen {
   flex: 1;
   min-height: 0;
-  padding: 16px 18px;
-  overflow: auto;
+  padding: 12px;
+  overflow: hidden;
   position: relative;
 }
-.terminal-screen pre {
-  margin: 0;
-  color: #d4d4d4;
-  white-space: pre-wrap;
-  font-size: 13px;
-  line-height: 1.55;
-}
-.terminal-screen input {
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  opacity: 0;
-  position: absolute;
-  bottom: 0;
-  left: 0;
-}
+.terminal-screen .xterm { height: 100%; }
+.terminal-screen .xterm-viewport { scrollbar-width: thin; }
 .terminal-hint { padding: 9px 18px; color: #7d8592; background: #1b1e24; border-top: 1px solid #30343d; }
 .terminal-modal .close { z-index: 2; color: #9ca3af; top: 7px; }
