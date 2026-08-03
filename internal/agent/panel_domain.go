@@ -55,7 +55,8 @@ func bindPanelDomain(ctx context.Context, domain, server, tool, email string) (A
 	var output string
 	switch tool {
 	case "certbot":
-		if _, err := exec.LookPath("certbot"); err != nil {
+		certbot := certbotPath()
+		if certbot == "" {
 			rollback()
 			return ActionResult{}, errors.New("certbot is not installed")
 		}
@@ -69,7 +70,7 @@ func bindPanelDomain(ctx context.Context, domain, server, tool, email string) (A
 		} else {
 			args = append(args, "--register-unsafely-without-email")
 		}
-		res, err := run(ctx, "certbot", args...)
+		res, err := run(ctx, certbot, args...)
 		if err != nil {
 			rollback()
 			return ActionResult{}, err

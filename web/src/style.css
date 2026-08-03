@@ -1202,6 +1202,111 @@ textarea {
   align-items: center;
 }
 
+/* —— File manager —— */
+.file-browser-bar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(220px, 32%);
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 10px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  box-shadow: var(--shadow);
+}
+
+.icon-btn {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: #606266;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+.icon-btn:disabled { opacity: .45; cursor: default; }
+.icon-btn svg { width: 16px; height: 16px; }
+
+.breadcrumbs {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.breadcrumbs button {
+  flex: none;
+  padding: 5px 7px;
+  color: #606266;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+}
+
+.breadcrumbs button:hover { color: var(--green); background: var(--green-soft); }
+.breadcrumbs svg { flex: none; width: 14px; height: 14px; color: #c0c4cc; }
+.breadcrumbs button svg { color: var(--green); }
+.file-browser-bar form, .file-browser-bar input { width: 100%; }
+.file-browser-bar input { padding: 7px 10px; font-family: ui-monospace, "Cascadia Mono", monospace; font-size: 12px; }
+.file-panel { border-radius: 7px; }
+.file-table tbody tr:hover { background: #fafcfb; }
+.file-name { display: inline-flex; align-items: center; gap: 10px; padding: 0; color: var(--text); background: transparent; border: 0; font-weight: 500; }
+.file-name > span { width: 30px; height: 30px; display: grid; place-items: center; color: #909399; background: #f5f7fa; border-radius: 6px; }
+.file-name > span.folder { color: #e6a23c; background: #fdf6ec; }
+.file-name svg { width: 16px; height: 16px; }
+.file-mode { color: #7b8491; font-size: 11px; }
+
+/* —— Security settings —— */
+.security-settings {
+  max-width: 780px;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.security-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 20px;
+  border-bottom: 1px solid #f0f2f5;
+}
+
+.security-icon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  color: var(--green);
+  background: var(--green-soft);
+  border-radius: 10px;
+}
+
+.security-icon svg { width: 22px; height: 22px; }
+.security-head h2 { margin: 0 0 3px; font-size: 16px; }
+.security-head p, .security-action p { margin: 0; color: var(--muted); font-size: 12px; }
+.security-status { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; color: #909399; background: #f5f7fa; border-radius: 12px; font-size: 12px; }
+.security-status.enabled { color: var(--green-dark); background: var(--green-soft); }
+.security-status svg { width: 13px; height: 13px; }
+.security-action { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 18px 20px; }
+.security-action strong { display: block; margin-bottom: 3px; font-size: 13px; }
+.security-settings .totp-setup { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: end; margin: 18px 20px; padding: 16px; }
+.security-settings .totp-setup strong { display: block; margin-bottom: 8px; font-size: 13px; }
+.security-settings .totp-setup p { margin: 7px 0 0; }
+.totp-verify { display: flex; gap: 8px; }
+.totp-verify input { width: 130px; text-align: center; letter-spacing: 4px; font-size: 16px; }
+.security-settings > .success, .security-settings > .error { display: block; margin: 0 20px 16px; }
+.update-channel { max-width: 360px; }
+.update-channel small { color: var(--warn); line-height: 1.5; }
+
 /* —— App store —— */
 .market-tools {
   display: flex;
@@ -1397,4 +1502,31 @@ textarea {
   .app-card > button {
     grid-column: 1 / -1;
   }
+  .file-browser-bar {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .file-browser-bar form {
+    grid-column: 1 / -1;
+  }
+  .file-table th:nth-child(3),
+  .file-table td:nth-child(3),
+  .file-table th:nth-child(4),
+  .file-table td:nth-child(4) {
+    display: none;
+  }
+  .security-head {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .security-status {
+    grid-column: 1 / -1;
+    width: max-content;
+  }
+  .security-action,
+  .security-settings .totp-setup,
+  .totp-verify {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+    flex-direction: column;
+  }
+  .totp-verify input { width: 100%; }
 }

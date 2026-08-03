@@ -1,14 +1,14 @@
 package agent
 
-import (
-	"context"
-	"strings"
-	"testing"
-)
+import "testing"
 
-func TestSelfUpdateRejectsPrerelease(t *testing.T) {
-	_, err := selfUpdate(context.Background(), "prerelease")
-	if err == nil || !strings.Contains(err.Error(), "only stable") {
-		t.Fatalf("expected prerelease to be rejected, got %v", err)
+func TestUpdateInstallURL(t *testing.T) {
+	for _, channel := range []string{"stable", "prerelease"} {
+		if url, err := updateInstallURL(channel); err != nil || url == "" {
+			t.Fatalf("%s: url=%q err=%v", channel, url, err)
+		}
+	}
+	if _, err := updateInstallURL("nightly"); err == nil {
+		t.Fatal("nightly channel accepted")
 	}
 }

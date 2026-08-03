@@ -32,7 +32,10 @@ func DetectServices() []domain.DetectedService {
 	installed["php"] = phpOK
 
 	certbotMethods, certbotDefault := []string{"source", "package"}, "source"
-	if snapOK && (!certbotOK || strings.HasPrefix(certbotPath, "/snap/")) {
+	if certbotOK {
+		certbotDefault = CertbotInstallMethod(certbotPath)
+	}
+	if snapOK && (!certbotOK || certbotDefault == "snap") {
 		certbotMethods, certbotDefault = append([]string{"snap"}, certbotMethods...), "snap"
 	}
 	out := []domain.DetectedService{
@@ -52,6 +55,33 @@ func DetectServices() []domain.DetectedService {
 		soft("php", "PHP", "runtime", nil, []string{"source", "package"}, "source", []string{"8.1", "8.2", "8.3", "8.4"}, phpOK, phpPath, phpIniPath(phpPath), phpStatus(), installed),
 	}
 	return out
+}
+
+func CertbotInstallMethod(path string) string {
+	original := filepath.ToSlash(path)
+	if strings.Contains(original, "/snap/") {
+		return "snap"
+	}
+	if target, err := os.Readlink(path); err == nil {
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(path), target)
+		}
+		if strings.Contains(filepath.ToSlash(target), "/snap/") {
+			return "snap"
+		}
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		path = resolved
+	}
+	path = filepath.ToSlash(path)
+	if strings.Contains(path, "/snap/") {
+		return "snap"
+	}
+	if strings.HasPrefix(path, "/usr/bin/") || strings.HasPrefix(path, "/bin/") {
+		return "package"
+	}
+	return "source"
 }
 
 func soft(name, display, group string, conflicts, methods []string, defMethod string, versions []string, ok bool, path, config, status string, installed map[string]bool) domain.DetectedService {

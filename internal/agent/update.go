@@ -26,8 +26,9 @@ func selfUpdate(ctx context.Context, channel string) (ActionResult, error) {
 	if channel == "" {
 		channel = "stable"
 	}
-	if channel != "stable" {
-		return ActionResult{}, errors.New("only stable updates are supported")
+	installURL, err := updateInstallURL(channel)
+	if err != nil {
+		return ActionResult{}, err
 	}
 	cfg, err := config.Load()
 	if err != nil {
@@ -37,8 +38,6 @@ func selfUpdate(ctx context.Context, channel string) (ActionResult, error) {
 	if err := config.Save(cfg); err != nil {
 		return ActionResult{}, err
 	}
-
-	installURL := "https://github.com/" + githubRepo + "/releases/latest/download/install.sh"
 
 	tmpDir, err := os.MkdirTemp("", "anpanel-update-*")
 	if err != nil {
@@ -85,6 +84,17 @@ func selfUpdate(ctx context.Context, channel string) (ActionResult, error) {
 	return ActionResult{Output: "update completed via " + channel + " channel\n" + out}, nil
 }
 
+func updateInstallURL(channel string) (string, error) {
+	switch channel {
+	case "stable":
+		return "https://github.com/" + githubRepo + "/releases/latest/download/install.sh", nil
+	case "prerelease":
+		return "https://github.com/" + githubRepo + "/releases/download/prerelease-latest/install.sh", nil
+	default:
+		return "", errors.New("channel must be stable or prerelease")
+	}
+}
+
 type updateInfo struct {
 	Version        string `json:"version"`
 	Channel        string `json:"channel"`
@@ -94,10 +104,15 @@ type updateInfo struct {
 }
 
 func systemInfo(ctx context.Context) updateInfo {
+	cfg, _ := config.Load()
+	channel := cfg.UpdateChannel
+	if channel != "prerelease" {
+		channel = "stable"
+	}
 	ws, _ := preferredWebServer()
 	info := updateInfo{
 		Version:       Version,
-		Channel:       "stable",
+		Channel:       channel,
 		WebServer:     ws,
 		StableURL:     "https://github.com/" + githubRepo + "/releases/latest",
 	}

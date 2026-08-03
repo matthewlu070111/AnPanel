@@ -34,7 +34,7 @@
 | `GET /websites/config?path=` | 读取站点配置文件原文 |
 | `GET /rewrite-rules` | 伪静态模板列表（ThinkPHP / Laravel / WordPress 等） |
 | `GET /certificates` | 证书列表（Let’s Encrypt / AnPanel / acme.sh），含到期天数 |
-| `GET /files?path=` | 文件管理：列出允许根目录下的条目 |
+| `GET /files?path=` | 文件管理：从 `/` 开始列出文件系统条目 |
 | `GET /files/content?path=` | 读取文本文件内容（≤2MB） |
 | `GET /crontab` | root 用户 crontab 列表 |
 | `GET /system` | 版本、更新通道、Web 服务与远端 release 信息 |
@@ -87,9 +87,9 @@ agent 当前允许的动作如下。除此之外的 `kind` 会被拒绝。
 | `crontab.add` | - | `options.schedule` + `options.command` |
 | `crontab.remove` | 任务 id | 删除对应 crontab 行 |
 | `docker.deploy` | 镜像 | 拉取并运行容器，可选 `domain` 创建反代站点；`host_port`/`container_port`/`env`/`enable_ssl` |
-| `panel.self_update` | `stable` | 下载最新正式版 install.sh 并升级，保留配置 |
+| `panel.self_update` | `stable` 或 `prerelease` | 下载对应通道的 install.sh 并升级，保留配置 |
 | `package.install` | 软件名 | `options.method`=`source`\|`package`\|`script`\|`snap`；PHP 可带 `version`（8.1–8.4），`snap` 仅用于 Certbot。互斥：nginx↔apache、certbot↔acme.sh；compose 不可单独安装 |
-| `package.update` | 软件名 | 更新/重装；默认编译类走 source |
+| `package.update` | 软件名 | 更新/重装；Certbot 根据可执行路径自动选择 snap、系统包或 source |
 | `web.site.rewrite` | 域名 | `options.rewrite` 伪静态模板 id（none/spa/wordpress/thinkphp/laravel/yii） |
 | `notification.configure` | 配置标识 | JSON 放在 `options.json`，凭据文件权限为 `0600` |
 | `panel.bind_domain` | 面板入口 | 使用 `options.domain/server/tool/email` |

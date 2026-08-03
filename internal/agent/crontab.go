@@ -12,17 +12,25 @@ import (
 )
 
 func listCrontab(ctx context.Context) ([]domain.CronJob, error) {
+	out, err := readCrontab(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return parseCrontab(out), nil
+}
+
+func readCrontab(ctx context.Context) (string, error) {
 	cmd := exec.CommandContext(ctx, "crontab", "-l")
 	b, err := cmd.CombinedOutput()
 	out := string(b)
 	if err != nil {
 		// empty crontab exits 1 with "no crontab"
 		if strings.Contains(strings.ToLower(out), "no crontab") || len(strings.TrimSpace(out)) == 0 {
-			return []domain.CronJob{}, nil
+			return "", nil
 		}
-		return nil, fmt.Errorf("crontab -l failed: %s", redact(out))
+		return "", fmt.Errorf("crontab -l failed: %s", redact(out))
 	}
-	return parseCrontab(out), nil
+	return out, nil
 }
 
 func parseCrontab(raw string) []domain.CronJob {
@@ -30,20 +38,10 @@ func parseCrontab(raw string) []domain.CronJob {
 	i := 0
 	for _, line := range strings.Split(raw, "\n") {
 		trim := strings.TrimSpace(line)
-		if trim == "" {
+		if trim == "" || strings.HasPrefix(trim, "#") {
 			continue
 		}
-		enabled := true
 		body := trim
-		if strings.HasPrefix(body, "#") {
-			// disabled job if looks like a cron line after #
-			rest := strings.TrimSpace(strings.TrimPrefix(body, "#"))
-			if !looksLikeCron(rest) {
-				continue // plain comment
-			}
-			enabled = false
-			body = rest
-		}
 		if strings.HasPrefix(body, "@") {
 			// @reboot cmd, @daily cmd, ...
 			parts := strings.Fields(body)
@@ -53,7 +51,7 @@ func parseCrontab(raw string) []domain.CronJob {
 			sched := parts[0]
 			cmd := strings.Join(parts[1:], " ")
 			i++
-			jobs = append(jobs, domain.CronJob{ID: strconv.Itoa(i), Schedule: sched, Command: cmd, Raw: line, Enabled: enabled})
+			jobs = append(jobs, domain.CronJob{ID: strconv.Itoa(i), Schedule: sched, Command: cmd, Raw: line, Enabled: true})
 			continue
 		}
 		fields := strings.Fields(body)
@@ -63,7 +61,7 @@ func parseCrontab(raw string) []domain.CronJob {
 		sched := strings.Join(fields[0:5], " ")
 		cmd := strings.Join(fields[5:], " ")
 		i++
-		jobs = append(jobs, domain.CronJob{ID: strconv.Itoa(i), Schedule: sched, Command: cmd, Raw: line, Enabled: enabled})
+		jobs = append(jobs, domain.CronJob{ID: strconv.Itoa(i), Schedule: sched, Command: cmd, Raw: line, Enabled: true})
 	}
 	return jobs
 }
@@ -88,51 +86,52 @@ func addCrontab(ctx context.Context, schedule, command string) (ActionResult, er
 	if !looksLikeCron(line) {
 		return ActionResult{}, errors.New("invalid cron format; use \"m h dom mon dow command\" or \"@daily command\"")
 	}
-	jobs, err := listCrontab(ctx)
+	raw, err := readCrontab(ctx)
 	if err != nil {
 		return ActionResult{}, err
 	}
-	// rebuild file
-	var b strings.Builder
-	for _, j := range jobs {
-		if j.Enabled {
-			b.WriteString(j.Schedule + " " + j.Command + "\n")
-		} else {
-			b.WriteString("# " + j.Schedule + " " + j.Command + "\n")
-		}
+	if raw != "" && !strings.HasSuffix(raw, "\n") {
+		raw += "\n"
 	}
-	b.WriteString(line + "\n")
-	if err := writeCrontab(ctx, b.String()); err != nil {
+	if err := writeCrontab(ctx, raw+line+"\n"); err != nil {
 		return ActionResult{}, err
 	}
 	return ActionResult{Output: "cron job added: " + line}, nil
 }
 
 func removeCrontab(ctx context.Context, id string) (ActionResult, error) {
-	jobs, err := listCrontab(ctx)
+	raw, err := readCrontab(ctx)
 	if err != nil {
 		return ActionResult{}, err
 	}
-	found := false
-	var b strings.Builder
-	for _, j := range jobs {
-		if j.ID == id {
-			found = true
-			continue
-		}
-		if j.Enabled {
-			b.WriteString(j.Schedule + " " + j.Command + "\n")
-		} else {
-			b.WriteString("# " + j.Schedule + " " + j.Command + "\n")
-		}
-	}
+	updated, found := removeCronLine(raw, id)
 	if !found {
 		return ActionResult{}, errors.New("cron job not found")
 	}
-	if err := writeCrontab(ctx, b.String()); err != nil {
+	if err := writeCrontab(ctx, updated); err != nil {
 		return ActionResult{}, err
 	}
 	return ActionResult{Output: "cron job removed: " + id}, nil
+}
+
+func removeCronLine(raw, id string) (string, bool) {
+	target, err := strconv.Atoi(id)
+	if err != nil || target < 1 {
+		return raw, false
+	}
+	lines, job, found := strings.Split(raw, "\n"), 0, false
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if len(parseCrontab(line)) > 0 {
+			job++
+			if job == target {
+				found = true
+				continue
+			}
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n"), found
 }
 
 func writeCrontab(ctx context.Context, content string) error {

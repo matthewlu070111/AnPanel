@@ -15,19 +15,11 @@ import (
 
 const maxFileBytes = 2 << 20 // 2 MiB editor limit
 
-var fileRoots = []string{
-	"/var/www",
-	"/www",
-	"/srv",
-	"/opt",
-	"/home",
-	"/etc/anpanel/compose",
-	"/var/lib/anpanel",
-}
+var fileRoots = []string{"/"}
 
 func safeFilePath(raw string) (string, error) {
 	if raw == "" {
-		return "/var/www", nil
+		return "/", nil
 	}
 	p, err := filepath.Abs(raw)
 	if err != nil {
@@ -47,7 +39,7 @@ func safeFilePath(raw string) (string, error) {
 		}
 	}
 	if !ok {
-		return "", errors.New("path is outside allowed roots (/var/www, /www, /srv, /opt, /home, /etc/anpanel/compose, /var/lib/anpanel)")
+		return "", errors.New("path is outside filesystem root")
 	}
 	return p, nil
 }

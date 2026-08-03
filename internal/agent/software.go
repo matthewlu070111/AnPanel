@@ -81,15 +81,13 @@ func updateSoftware(ctx context.Context, component string, opts map[string]strin
 	}
 	method := strings.ToLower(strings.TrimSpace(opts["method"]))
 	version := strings.TrimSpace(opts["version"])
+	if component == "certbot" {
+		path, _ := system.LookPath("certbot")
+		method = system.CertbotInstallMethod(path)
+	}
 	// Prefer re-running source for compiled stacks; package for package installs.
 	if method == "" {
-		if component == "certbot" {
-			if p, _ := system.LookPath("certbot"); strings.HasPrefix(p, "/snap/") {
-				method = "snap"
-			} else {
-				method = "source"
-			}
-		} else if component == "docker" || component == "acme.sh" {
+		if component == "docker" || component == "acme.sh" {
 			method = map[string]string{"docker": "package", "acme.sh": "script"}[component]
 		} else {
 			method = "source"

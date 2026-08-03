@@ -4,7 +4,7 @@ import {
   Activity, Box, Globe2, ServerCog, ListChecks, Settings2, LogOut, RefreshCw,
   Play, Square, RotateCw, Trash2, Terminal, LockKeyhole, Languages, BellRing,
   Cpu, HardDrive, Database, Plus, FileKey2, FolderOpen, FileText, ChevronUp,
-  Pencil, Download, Search, PackageOpen,
+  Pencil, Download, Search, PackageOpen, Home, ChevronRight, ShieldCheck, CheckCircle2,
 } from 'lucide-react'
 import {api, post, setCSRF} from './api'
 import {I18n, Lang, translator, useI18n} from './i18n'
@@ -568,29 +568,22 @@ function SiteWizard({onClose, onCreated}: {onClose: () => void; onCreated: () =>
 /* —— Files —— */
 function FilesPage() {
   const {t} = useI18n()
-  const [path, setPath] = useState('/var/www')
+  const [path, setPath] = useState('/'), [address, setAddress] = useState('/')
   const [items, setItems] = useState<FileEntry[]>([])
   const [error, setError] = useState(''), [message, setMessage] = useState('')
   const [edit, setEdit] = useState<{path: string; content: string} | null>(null)
 
   const load = (p = path) => api<FileEntry[]>(`/files?path=${encodeURIComponent(p)}`)
-    .then(v => { setItems(Array.isArray(v) ? v : []); setPath(p); setError('') })
+    .then(v => { setItems(Array.isArray(v) ? v : []); setPath(p); setAddress(p); setError('') })
     .catch(e => setError(e.message))
 
-  useEffect(() => { void load('/var/www') }, [])
+  useEffect(() => { void load('/') }, [])
 
   function parentOf(p: string) {
-    const roots = ['/var/www', '/www', '/srv', '/opt', '/home', '/etc/anpanel/compose', '/var/lib/anpanel']
-    const norm = p.replace(/\\/g, '/').replace(/\/$/, '') || '/var/www'
-    if (roots.includes(norm)) return norm
+    const norm = p.replace(/\\/g, '/').replace(/\/$/, '') || '/'
+    if (norm === '/') return '/'
     const parts = norm.split('/').filter(Boolean)
-    if (parts.length <= 1) return '/var/www'
-    const parent = '/' + parts.slice(0, -1).join('/')
-    // stay within an allowed root
-    for (const root of roots) {
-      if (parent === root || parent.startsWith(root + '/')) return parent
-    }
-    return roots.find(r => norm.startsWith(r + '/') || norm === r) || '/var/www'
+    return parts.length <= 1 ? '/' : '/' + parts.slice(0, -1).join('/')
   }
 
   async function openFile(f: FileEntry) {
@@ -636,31 +629,40 @@ function FilesPage() {
     setTimeout(() => load(), 500)
   }
 
+  const crumbs = path.split('/').filter(Boolean)
+
   return (
     <>
       <PageHead title={t('filesTitle')} action={<div className="toolbar">
-        <button className="btn" onClick={() => load(parentOf(path))}><ChevronUp />{t('parentDir')}</button>
         <button className="btn" onClick={newFolder}><Plus size={14} />{t('newFolder')}</button>
         <button className="btn" onClick={newFile}><FileText size={14} />{t('newFile')}</button>
         <button className="btn" onClick={() => load()}><RefreshCw />{t('refresh')}</button>
       </div>} />
       <div className="page-body">
-        <div className="panel" style={{marginBottom: 12, padding: '10px 14px', fontFamily: 'ui-monospace,monospace', fontSize: 13}}>{t('path')}: {path}</div>
+        <div className="file-browser-bar">
+          <button className="icon-btn" title={t('parentDir')} disabled={path === '/'} onClick={() => load(parentOf(path))}><ChevronUp /></button>
+          <div className="breadcrumbs">
+            <button onClick={() => load('/')}><Home /></button>
+            {crumbs.map((part, i) => <React.Fragment key={`${part}-${i}`}><ChevronRight /><button onClick={() => load('/' + crumbs.slice(0, i + 1).join('/'))}>{part}</button></React.Fragment>)}
+          </div>
+          <form onSubmit={e => { e.preventDefault(); void load(address.trim() || '/') }}><input aria-label={t('path')} value={address} onChange={e => setAddress(e.target.value)} /></form>
+        </div>
         {error && <div className="error banner">{error}</div>}
         {message && <div className="success" style={{marginBottom: 12}}>{message}</div>}
-        <div className="panel table-panel">
-          <table>
-            <thead><tr><th>{t('path')}</th><th>{t('size')}</th><th>{t('modified')}</th><th /></tr></thead>
+        <div className="panel table-panel file-panel">
+          <table className="file-table">
+            <thead><tr><th>{t('path')}</th><th>{t('size')}</th><th>{t('permissions')}</th><th>{t('modified')}</th><th /></tr></thead>
             <tbody>
               {items.map(f => (
                 <tr key={f.path}>
                   <td>
-                    <button className="btn" style={{border: 0, background: 'transparent', padding: 0, color: 'var(--text)'}} onClick={() => openFile(f)}>
-                      {f.is_dir ? <FolderOpen size={16} style={{verticalAlign: 'middle', marginRight: 6, color: 'var(--green)'}} /> : <FileText size={16} style={{verticalAlign: 'middle', marginRight: 6, color: 'var(--muted)'}} />}
+                    <button className="file-name" onClick={() => openFile(f)}>
+                      <span className={f.is_dir ? 'folder' : ''}>{f.is_dir ? <FolderOpen /> : <FileText />}</span>
                       {f.name}
                     </button>
                   </td>
                   <td>{f.is_dir ? '-' : bytes(f.size)}</td>
+                  <td><code className="file-mode">{f.mode}</code></td>
                   <td>{f.mod_time ? new Date(f.mod_time).toLocaleString() : '-'}</td>
                   <td className="actions">
                     {!f.is_dir && <button title={t('edit')} onClick={() => openFile(f)}><Pencil /></button>}
@@ -1077,16 +1079,17 @@ function SecurityBlock({me, setMe}: {me: Me; setMe: (m: Me) => void}) {
     } catch (e) { setError((e as Error).message) }
   }
   return (
-    <div className="panel security-card">
-      <LockKeyhole />
-      <div><h2>{t('totpTitle')}</h2><p>{me.totp_enabled ? t('totpOn') : t('totpOff')}</p></div>
-      {!me.totp_enabled && !secret && <button className="primary" onClick={setup}>{t('setupTOTP')}</button>}
+    <div className="security-settings">
+      <div className="security-head">
+        <span className="security-icon"><ShieldCheck /></span>
+        <div><h2>{t('totpTitle')}</h2><p>{me.totp_enabled ? t('totpOn') : t('totpOff')}</p></div>
+        <span className={`security-status ${me.totp_enabled ? 'enabled' : ''}`}>{me.totp_enabled ? <CheckCircle2 /> : <LockKeyhole />}{me.totp_enabled ? t('enabled') : t('notEnabled')}</span>
+      </div>
+      {!me.totp_enabled && !secret && <div className="security-action"><div><strong>{t('authenticatorTitle')}</strong><p>{t('authenticatorHint')}</p></div><button className="primary" onClick={setup}>{t('setupTOTP')}</button></div>}
       {secret && (
         <div className="totp-setup">
-          <code>{secret.secret}</code>
-          <p>{t('totpSecretHint')}</p>
-          <input value={code} onChange={e => setCode(e.target.value)} maxLength={6} />
-          <button className="primary" onClick={enable}>{t('totpVerify')}</button>
+          <div><strong>{t('totpSecret')}</strong><code>{secret.secret}</code><p>{t('totpSecretHint')}</p></div>
+          <div className="totp-verify"><input inputMode="numeric" placeholder="000000" value={code} onChange={e => setCode(e.target.value.replace(/\D/g, ''))} maxLength={6} /><button className="primary" disabled={code.length !== 6} onClick={enable}>{t('totpVerify')}</button></div>
         </div>
       )}
       {message && <div className="success">{message}</div>}
@@ -1098,19 +1101,21 @@ function SecurityBlock({me, setMe}: {me: Me; setMe: (m: Me) => void}) {
 function UpdateBlock() {
   const {t} = useI18n()
   const [info, setInfo] = useState<SystemInfo | null>(null)
+  const [channel, setChannel] = useState<'stable' | 'prerelease'>('stable')
   const [message, setMessage] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false)
 
   const load = () => api<SystemInfo>('/system').then(v => {
     setInfo(v)
+    setChannel(v.channel === 'prerelease' ? 'prerelease' : 'stable')
   }).catch(e => setError(e.message))
 
   useEffect(() => { void load() }, [])
 
   async function doUpdate() {
-    if (!confirm(t('confirmStableUpdate'))) return
+    if (!confirm(t(channel === 'prerelease' ? 'confirmPreUpdate' : 'confirmStableUpdate'))) return
     setBusy(true); setError(''); setMessage('')
     try {
-      await post('/actions', {kind: 'panel.self_update', resource: 'stable', options: {channel: 'stable'}})
+      await post('/actions', {kind: 'panel.self_update', resource: channel, options: {channel}})
       setMessage(t('updateTask'))
     } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
@@ -1126,9 +1131,16 @@ function UpdateBlock() {
           <div><strong>{t('currentVersion')}:</strong> {info.version}</div>
           <div><strong>{t('webServerUsed')}:</strong> {info.web_server || '-'}</div>
           <div><strong>{t('latestStable')}:</strong> {info.latest_stable || '-'}</div>
-          <div><strong>{t('channel')}:</strong> {t('channelStable')}</div>
+          <div><strong>{t('channel')}:</strong> {t(channel === 'prerelease' ? 'channelPre' : 'channelStable')}</div>
         </div>
       )}
+      <label className="update-channel">{t('channel')}
+        <select value={channel} onChange={e => setChannel(e.target.value as 'stable' | 'prerelease')}>
+          <option value="stable">{t('channelStable')}</option>
+          <option value="prerelease">{t('channelPre')}</option>
+        </select>
+        {channel === 'prerelease' && <small>{t('prereleaseWarning')}</small>}
+      </label>
       <div className="card-actions" style={{marginTop: 14}}>
         <button className="btn" onClick={load}><RefreshCw size={14} />{t('checkUpdate')}</button>
         <button className="primary" disabled={busy} onClick={doUpdate}>{busy ? '…' : t('doUpdate')}</button>
