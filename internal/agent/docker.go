@@ -113,7 +113,12 @@ func dockerContainerAction(ctx context.Context, id, action string) error {
 	case "start", "stop", "restart":
 		return dockerRequest(ctx, "POST", "/containers/"+escaped+"/"+action, nil)
 	case "delete":
-		return dockerRequest(ctx, "DELETE", "/containers/"+escaped+"?v=false&force=false", nil)
+		// Running containers return 409 Conflict unless stopped or force-removed.
+		_ = dockerRequest(ctx, "POST", "/containers/"+escaped+"/stop?t=10", nil)
+		if err := dockerRequest(ctx, "DELETE", "/containers/"+escaped+"?v=false&force=true", nil); err != nil {
+			return fmt.Errorf("delete container: %w (若仍失败请确认容器未被其它进程占用)", err)
+		}
+		return nil
 	default:
 		return fmt.Errorf("unsupported container action")
 	}

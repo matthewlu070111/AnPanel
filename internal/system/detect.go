@@ -166,16 +166,16 @@ func soft(name, display, group string, conflicts, methods []string, defMethod st
 		Name: name, DisplayName: display, Group: group, Conflicts: conflicts,
 		InstallMethods: methods, DefaultMethod: defMethod, Versions: versions,
 		Installed: ok, Path: path, ConfigPath: config, Status: status,
+		// Always allow Install button when not installed; UI warns on conflict click.
 		CanInstall: !ok, CanUpdate: ok && name != "compose",
 	}
 	if ok {
 		s.Version = commandVersion(path)
 		s.CanInstall = false
 	}
-	// exclusivity block
+	// Record mutual exclusion for the install dialog (do not hide/disable the card).
 	for _, c := range conflicts {
 		if installed[c] && !ok {
-			s.CanInstall = false
 			s.BlockReason = "已安装 " + c + "，与 " + display + " 互斥，不能同时安装。请先卸载冲突软件。"
 			break
 		}

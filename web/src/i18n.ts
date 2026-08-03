@@ -281,6 +281,13 @@ const zh = {
   deployDockerNote: '此应用通过 Docker 容器安装',
   hostPort: '宿主机端口',
   version: '版本',
+  conflictTitle: '无法安装：软件互斥',
+  startDeploy: '开始部署',
+  deployWaiting: '任务已提交，正在等待日志…',
+  deployDoneHint: '部署完成。请仔细查看上方日志中的访问地址与默认账号密码。',
+  deployFailedHint: '部署失败，请根据日志排查后重试。',
+  close: '关闭',
+  runInBackground: '后台运行',
 } as const
 
 
@@ -563,6 +570,13 @@ const en: Record<keyof typeof zh, string> = {
   deployDockerNote: 'This app is installed as a Docker container',
   hostPort: 'Host port',
   version: 'Version',
+  conflictTitle: 'Cannot install: conflict',
+  startDeploy: 'Start deploy',
+  deployWaiting: 'Task queued, waiting for logs…',
+  deployDoneHint: 'Done. Check the log above for URL and default credentials.',
+  deployFailedHint: 'Deploy failed. See log for details.',
+  close: 'Close',
+  runInBackground: 'Run in background',
 }
 
 const messages = {zh, en}

@@ -580,11 +580,28 @@ func deployDockerApp(ctx context.Context, name string, opts map[string]string) (
 	if _, err := exec.LookPath("docker"); err != nil {
 		return ActionResult{}, errors.New("请先安装 Docker Engine")
 	}
-	// remove old container with same name if exists (recreate)
-	_, _ = run(ctx, "docker", "rm", "-f", spec.name)
-	if _, err := run(ctx, "docker", "pull", spec.image); err != nil {
-		return ActionResult{}, err
+	var log strings.Builder
+	log.WriteString("=== AnPanel Docker 部署 ===\n")
+	log.WriteString("应用: " + name + "\n")
+	log.WriteString("镜像: " + spec.image + "\n")
+	log.WriteString("容器: " + spec.name + "\n")
+	log.WriteString("端口: " + spec.hostPort + " → " + spec.containerPort + "\n\n")
+
+	log.WriteString("[1/3] 清理同名旧容器（如有）…\n")
+	if res, err := run(ctx, "docker", "rm", "-f", spec.name); err != nil {
+		log.WriteString("  (无旧容器或已清理)\n")
+	} else if res.Output != "" {
+		log.WriteString(res.Output + "\n")
 	}
+
+	log.WriteString("[2/3] 拉取镜像 " + spec.image + " …\n")
+	pull, err := run(ctx, "docker", "pull", spec.image)
+	if err != nil {
+		return ActionResult{Output: log.String()}, err
+	}
+	log.WriteString(pull.Output + "\n")
+
+	log.WriteString("[3/3] 创建并启动容器…\n")
 	args := []string{"run", "-d", "--name", spec.name, "--restart", "unless-stopped", "-p", spec.hostPort + ":" + spec.containerPort}
 	for _, e := range spec.env {
 		args = append(args, "-e", e)
@@ -598,9 +615,12 @@ func deployDockerApp(ctx context.Context, name string, opts map[string]string) (
 	}
 	res, err := run(ctx, "docker", args...)
 	if err != nil {
-		return ActionResult{}, err
+		return ActionResult{Output: log.String()}, err
 	}
-	return ActionResult{Output: "docker app deployed: " + spec.name + " (" + spec.image + ")\n" + res.Output}, nil
+	log.WriteString(res.Output + "\n")
+	log.WriteString("\n=== 部署完成 ===\n")
+	log.WriteString(spec.postInfo)
+	return ActionResult{Output: log.String()}, nil
 }
 
 func updateDockerApp(ctx context.Context, name string, opts map[string]string) (ActionResult, error) {
@@ -611,6 +631,7 @@ func updateDockerApp(ctx context.Context, name string, opts map[string]string) (
 type dockerAppRun struct {
 	name, image, hostPort, containerPort string
 	env, volumes, cmd                    []string
+	postInfo                             string
 }
 
 func dockerAppSpec(name string, opts map[string]string) (dockerAppRun, error) {
@@ -621,10 +642,17 @@ func dockerAppSpec(name string, opts map[string]string) (dockerAppRun, error) {
 		if host == "" {
 			host = "2053"
 		}
+		info := fmt.Sprintf(`容器名: anpanel-3x-ui
+访问地址: http://服务器IP:%s
+默认用户名: admin
+默认密码: admin
+说明: 首次登录后请立刻修改密码；数据卷 anpanel-3x-ui-data 会保留配置。
+`, host)
 		return dockerAppRun{
 			name: "anpanel-3x-ui", image: "ghcr.io/mhsanaei/3x-ui:latest",
 			hostPort: host, containerPort: "2053",
-			volumes: []string{"anpanel-3x-ui-data:/etc/x-ui"},
+			volumes:  []string{"anpanel-3x-ui-data:/etc/x-ui"},
+			postInfo: info,
 		}, nil
 	case "php":
 		ver := strings.TrimSpace(opts["version"])
@@ -638,10 +666,17 @@ func dockerAppSpec(name string, opts map[string]string) (dockerAppRun, error) {
 		if host == "" {
 			host = "9000"
 		}
+		info := fmt.Sprintf(`容器名: anpanel-php
+镜像: php:%s-fpm
+FPM 监听: 宿主机 %s → 容器 9000
+网站目录映射: /var/www → /var/www
+说明: 此为 PHP-FPM，无面板账号；站点反代/Nginx 请指向 127.0.0.1:%s。
+`, ver, host, host)
 		return dockerAppRun{
 			name: "anpanel-php", image: "php:" + ver + "-fpm",
 			hostPort: host, containerPort: "9000",
-			volumes: []string{"/var/www:/var/www"},
+			volumes:  []string{"/var/www:/var/www"},
+			postInfo: info,
 		}, nil
 	default:
 		return dockerAppRun{}, fmt.Errorf("unknown docker app %q", name)

@@ -788,6 +788,33 @@ textarea {
 }
 .entry-preview code { color: var(--green-dark); font-weight: 600; }
 .field-error { color: var(--danger) !important; font-weight: 500; }
+.deploy-progress-modal {
+  width: min(720px, 100%) !important;
+  max-height: min(80vh, 700px);
+}
+.deploy-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+.deploy-status small { color: var(--muted); margin-left: auto; font-family: ui-monospace, monospace; }
+.deploy-log {
+  margin: 0;
+  flex: 1;
+  min-height: 280px;
+  max-height: 420px;
+  overflow: auto;
+  background: #0f1419;
+  color: #c8e6c9;
+  border: 1px solid #1e2a32;
+  border-radius: 8px;
+  padding: 14px 16px;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 
 /* Baota-like site settings panel — fixed size, consistent across tabs */
 .site-settings-back {

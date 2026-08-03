@@ -882,6 +882,7 @@ function Services() {
   const {t} = useI18n()
   const [items, setItems] = useState<Service[]>(() => cached<Service[]>('services', [])), [error, setError] = useState(''), [message, setMessage] = useState('')
   const [installDlg, setInstallDlg] = useState<Service | null>(null)
+  const [progress, setProgress] = useState<{title: string; taskId: string} | null>(null)
   const [query, setQuery] = useState('')
   const load = () => api<Service[]>('/services').then(v => { const next = Array.isArray(v) ? v : []; setItems(next); cache('services', next); setError('') }).catch(e => setError(e.message))
   useEffect(() => { void load() }, [])
@@ -894,17 +895,22 @@ function Services() {
   async function doUpdate(s: Service) {
     try {
       if (s.deploy === 'docker') {
-        await post('/actions', {kind: 'package.update', resource: s.name, options: {deploy: 'docker', version: s.versions?.[s.versions.length - 2] || s.versions?.[0] || '', host_port: s.host_port || ''}})
+        const r = await post<{task_id: string}>('/actions', {kind: 'package.update', resource: s.name, options: {deploy: 'docker', version: s.versions?.[s.versions.length - 2] || s.versions?.[0] || '', host_port: s.host_port || ''}})
+        setProgress({title: `${t('updateSoft')} ${s.display_name || s.name}`, taskId: r.task_id})
       } else {
         const method = s.name === 'docker' ? '' : (s.default_method || 'source')
         await post('/actions', {kind: 'package.update', resource: s.name, options: method ? {method} : {}})
+        setMessage(t('updateQueued'))
       }
-      setMessage(t('updateQueued'))
     } catch (e) { setError((e as Error).message) }
+  }
+  function openInstall(s: Service) {
+    // Always open dialog; conflict is shown inside for confirmation UX.
+    setInstallDlg(s)
   }
   const q = query.trim().toLowerCase()
   const systemApps = items
-    .filter(s => s.name !== 'compose') // Compose is bundled with Docker, never show alone
+    .filter(s => s.name !== 'compose')
     .filter(s => !q || `${s.name} ${s.display_name || ''}`.toLowerCase().includes(q))
     .sort((a, b) => Number(b.name === 'docker') - Number(a.name === 'docker'))
   return (
@@ -934,7 +940,6 @@ function Services() {
                     </div>
                     {s.name === 'docker' && <p className="docker-app-hint">{s.note || t('dockerInstallHint')}</p>}
                     {s.name !== 'docker' && s.note && <p style={{gridColumn: '1/-1', margin: 0, fontSize: 12, color: 'var(--muted)'}}>{s.note}</p>}
-                    {s.block_reason && <p style={{gridColumn: '1/-1', margin: 0, fontSize: 12, color: 'var(--danger)'}}>{s.block_reason}</p>}
                     <div className="card-actions">
                       {s.installed && s.deploy !== 'docker' && ['nginx', 'apache', 'docker'].includes(s.name) && (
                         <>
@@ -943,9 +948,8 @@ function Services() {
                         </>
                       )}
                       {s.can_update && <button className="btn" onClick={() => doUpdate(s)}>{t('updateSoft')}</button>}
-                      {s.can_install && <button className="primary" onClick={() => setInstallDlg(s)}>{s.deploy === 'docker' ? t('deployDockerApp') : t('installSoft')}</button>}
-                      {!s.installed && !s.can_install && s.block_reason && (
-                        <button className="btn" disabled title={s.block_reason}>{t('conflictBlocked')}</button>
+                      {!s.installed && (s.can_install || s.block_reason) && (
+                        <button className="primary" onClick={() => openInstall(s)}>{s.deploy === 'docker' ? t('deployDockerApp') : t('installSoft')}</button>
                       )}
                     </div>
                   </div>
@@ -957,7 +961,18 @@ function Services() {
           <InstallDialog
             service={installDlg}
             onClose={() => setInstallDlg(null)}
-            onDone={() => { setInstallDlg(null); setMessage(t('installQueued')); setTimeout(load, 1500) }}
+            onQueued={(taskId, title) => {
+              setInstallDlg(null)
+              if (taskId) setProgress({title, taskId})
+              else { setMessage(t('installQueued')); setTimeout(load, 1500) }
+            }}
+          />
+        )}
+        {progress && (
+          <TaskProgressModal
+            title={progress.title}
+            taskId={progress.taskId}
+            onClose={() => { setProgress(null); void load() }}
           />
         )}
       </div>
@@ -965,12 +980,15 @@ function Services() {
   )
 }
 
-function InstallDialog({service, onClose, onDone}: {service: Service; onClose: () => void; onDone: () => void}) {
+function InstallDialog({service, onClose, onQueued}: {service: Service; onClose: () => void; onQueued: (taskId: string, title: string) => void}) {
   const {t} = useI18n()
   const methods = service.install_methods?.length ? service.install_methods : ['source']
   const [method, setMethod] = useState(service.default_method || methods[0] || 'source')
   const [version, setVersion] = useState(service.versions?.[service.versions.length - 2] || service.versions?.[0] || '8.3')
   const [error, setError] = useState(''), [busy, setBusy] = useState(false)
+  const isDocker = service.deploy === 'docker'
+  const blocked = !!service.block_reason
+  const [hostPort, setHostPort] = useState(service.host_port || '')
   function methodLabel(m: string) {
     if (m === 'source') return t('methodSource')
     if (m === 'package') return t('methodPackage')
@@ -978,49 +996,98 @@ function InstallDialog({service, onClose, onDone}: {service: Service; onClose: (
     if (m === 'snap') return t('methodSnap')
     return m
   }
-  const isDocker = service.deploy === 'docker'
-  const [hostPort, setHostPort] = useState(service.host_port || '')
   async function submit() {
+    if (blocked) return
     setBusy(true); setError('')
     try {
+      let r: {task_id: string}
       if (isDocker) {
-        await post('/actions', {kind: 'package.install', resource: service.name, options: {deploy: 'docker', version, host_port: hostPort}})
+        r = await post('/actions', {kind: 'package.install', resource: service.name, options: {deploy: 'docker', version, host_port: hostPort}})
       } else {
-        await post('/actions', {kind: 'package.install', resource: service.name, options: {method, version}})
+        r = await post('/actions', {kind: 'package.install', resource: service.name, options: {method, version}})
       }
-      onDone()
-    } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
+      onQueued(r.task_id || '', `${isDocker ? t('deployDockerApp') : t('installSoft')} ${service.display_name || service.name}`)
+    } catch (e) { setError((e as Error).message); setBusy(false) }
   }
   return (
     <div className="modal-back"><div className="modal">
       <button className="close" onClick={onClose}>×</button>
       <h2>{isDocker ? t('deployDockerApp') : t('installSoft')} {service.display_name || service.name}</h2>
-      {isDocker && <p style={{margin: 0, fontSize: 13, color: 'var(--muted)'}}>{t('deployDockerNote')} · <code>{service.image}</code></p>}
-      {service.conflicts?.length ? <p style={{margin: 0, fontSize: 13, color: 'var(--muted)'}}>互斥：{service.conflicts.join(', ')}</p> : null}
-      {!isDocker && (
+      {blocked && (
+        <div className="error banner" style={{margin: 0}}>
+          <strong>{t('conflictTitle')}</strong>
+          <p style={{margin: '6px 0 0'}}>{service.block_reason}</p>
+        </div>
+      )}
+      {!blocked && isDocker && <p style={{margin: 0, fontSize: 13, color: 'var(--muted)'}}>{t('deployDockerNote')} · <code>{service.image}</code></p>}
+      {!blocked && !isDocker && (
         <label>{t('installMethod')}
           <select value={method} onChange={e => setMethod(e.target.value)}>
             {methods.map(m => <option key={m} value={m}>{methodLabel(m)}</option>)}
           </select>
         </label>
       )}
-      {service.versions?.length && (
+      {!blocked && service.versions?.length && (
         <label>{service.name === 'php' ? t('phpVersion') : t('version')}
           <select value={version} onChange={e => setVersion(e.target.value)}>
             {service.versions.map(v => <option key={v} value={v}>{v}</option>)}
           </select>
         </label>
       )}
-      {isDocker && (
+      {!blocked && isDocker && (
         <label>{t('hostPort')}<input value={hostPort} onChange={e => setHostPort(e.target.value)} placeholder={service.host_port || '8080'} /></label>
       )}
-      {!isDocker && method === 'source' && <p style={{margin: 0, fontSize: 12, color: 'var(--muted)'}}>编译安装可能需要数分钟到数十分钟，进度请在「计划任务」查看。</p>}
+      {!blocked && !isDocker && method === 'source' && <p style={{margin: 0, fontSize: 12, color: 'var(--muted)'}}>编译安装可能需要数分钟到数十分钟，进度请在本窗口或「计划任务」查看。</p>}
       {error && <div className="error">{error}</div>}
       <div className="card-actions">
         <button className="btn" onClick={onClose}>{t('cancel')}</button>
-        <button className="primary" disabled={busy} onClick={submit}>{busy ? '…' : t('installSoft')}</button>
+        {!blocked && <button className="primary" disabled={busy} onClick={submit}>{busy ? '…' : (isDocker ? t('startDeploy') : t('installSoft'))}</button>}
       </div>
     </div></div>
+  )
+}
+
+function TaskProgressModal({title, taskId, onClose}: {title: string; taskId: string; onClose: () => void}) {
+  const {t} = useI18n()
+  const [task, setTask] = useState<Task | null>(null)
+  const done = task && (task.status === 'succeeded' || task.status === 'failed' || task.status === 'rolled_back')
+  useEffect(() => {
+    let stop = false
+    const tick = async () => {
+      try {
+        const list = await api<Task[]>('/tasks')
+        const hit = (Array.isArray(list) ? list : []).find(x => x.id === taskId)
+        if (hit && !stop) setTask(hit)
+        if (hit && (hit.status === 'succeeded' || hit.status === 'failed' || hit.status === 'rolled_back')) return
+      } catch { /* ignore */ }
+      if (!stop) setTimeout(tick, 1000)
+    }
+    void tick()
+    return () => { stop = true }
+  }, [taskId])
+  const log = task?.log || t('deployWaiting')
+  return (
+    <div className="modal-back">
+      <div className="modal deploy-progress-modal">
+        <button className="close" onClick={onClose}>×</button>
+        <h2>{title}</h2>
+        <div className="deploy-status">
+          <span className={`task-dot ${task?.status || 'running'}`} />
+          <strong>{task ? taskStatusLabel(task.status, t) : t('statusRunningTask')}</strong>
+          <small>{taskId.slice(0, 8)}…</small>
+        </div>
+        <pre className="deploy-log">{log}</pre>
+        {done && task?.status === 'succeeded' && (
+          <div className="success" style={{margin: 0}}>{t('deployDoneHint')}</div>
+        )}
+        {done && task?.status !== 'succeeded' && (
+          <div className="error banner" style={{margin: 0}}>{t('deployFailedHint')}</div>
+        )}
+        <div className="card-actions">
+          <button className="primary" onClick={onClose}>{done ? t('close') : t('runInBackground')}</button>
+        </div>
+      </div>
+    </div>
   )
 }
 
