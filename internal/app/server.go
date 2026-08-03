@@ -656,6 +656,7 @@ func randomID() string { b := make([]byte, 16); _, _ = rand.Read(b); return hex.
 func taskSummary(kind, resource string, opts map[string]string) string {
 	labels := map[string]string{
 		"panel.self_update":        "面板更新",
+		"panel.set_entry":          "设置安全入口",
 		"panel.bind_domain":        "绑定面板域名",
 		"panel.unbind_domain":      "恢复面板 IP 访问",
 		"web.site.create":          "创建网站",

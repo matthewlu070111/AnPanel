@@ -261,3 +261,28 @@ server {
 }
 
 func normalizedDomain(v string) string { return strings.ToLower(strings.TrimSpace(v)) }
+
+// setPanelEntry writes entry_path / decoy_mode into config.json as root (web is read-only on /etc/anpanel).
+func setPanelEntry(path, decoy string) (ActionResult, error) {
+	normalized, reason := config.ValidateEntryPath(path)
+	if normalized == "" {
+		if reason == "" {
+			reason = "invalid entry path"
+		}
+		return ActionResult{}, errors.New(reason)
+	}
+	decoy = strings.ToLower(strings.TrimSpace(decoy))
+	if decoy != "dino" {
+		decoy = "404"
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return ActionResult{}, err
+	}
+	cfg.EntryPath = normalized
+	cfg.DecoyMode = decoy
+	if err := config.Save(cfg); err != nil {
+		return ActionResult{}, err
+	}
+	return ActionResult{Output: "entry path saved: /" + normalized + " decoy=" + decoy}, nil
+}

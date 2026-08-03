@@ -145,13 +145,26 @@ function FirstLogin({me, setMe}: {me: Me; setMe: (m: Me) => void}) {
   )
 }
 
+function entryPathHint(path: string, t: (k: any) => string): string {
+  const p = path.trim().replace(/^\/+|\/+$/g, '')
+  if (!p) return t('entryErrEmpty')
+  if (p.length < 4) return t('entryErrShort')
+  if (p.length > 64) return t('entryErrLong')
+  if (!/^[a-zA-Z0-9_-]+$/.test(p)) return t('entryErrCharset')
+  if (['api', 'assets', 'static', 'favicon.ico', 'robots.txt'].includes(p.toLowerCase())) return `${t('entryErrReserved')}：${p.toLowerCase()}`
+  return ''
+}
+
 function ForceEntrySetup({me, setMe}: {me: Me; setMe: (m: Me) => void}) {
   const {t} = useI18n()
   const [path, setPath] = useState(() => Math.random().toString(36).slice(2, 12))
   const [decoy, setDecoy] = useState<'404' | 'dino'>('404')
   const [error, setError] = useState(''), [busy, setBusy] = useState(false)
+  const pathError = entryPathHint(path, t)
   async function save(e: React.FormEvent) {
-    e.preventDefault(); setBusy(true); setError('')
+    e.preventDefault()
+    if (pathError) { setError(pathError); return }
+    setBusy(true); setError('')
     try {
       const v = await post<Me & {ok?: boolean}>('/settings/entry', {path, decoy_mode: decoy})
       setMe({...me, must_set_entry: false, entry_path: v.entry_path || path, decoy_mode: v.decoy_mode || decoy, entry_url: v.entry_url || ('/' + path)})
@@ -163,17 +176,19 @@ function ForceEntrySetup({me, setMe}: {me: Me; setMe: (m: Me) => void}) {
         <LockKeyhole />
         <h2>{t('entryForceTitle')}</h2>
         <p className="form-hint">{t('entryForceHint')}</p>
-        <label>{t('entryPath')}<input value={path} onChange={e => setPath(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))} minLength={4} maxLength={64} required /><small>{t('entryPathHint')}</small></label>
+        <label>{t('entryPath')}
+          <input value={path} onChange={e => { setPath(e.target.value); setError('') }} maxLength={64} required />
+          <small className={pathError ? 'field-error' : ''}>{pathError || t('entryPathHint')}</small>
+        </label>
         <label>{t('decoyMode')}
           <select value={decoy} onChange={e => setDecoy(e.target.value as '404' | 'dino')}>
             <option value="404">{t('decoy404')}</option>
             <option value="dino">{t('decoyDino')}</option>
           </select>
-          <small>{t('decoyHint')}</small>
         </label>
-        <div className="entry-preview">{t('entryPreview')}: <code>{location.origin}/{path}</code></div>
+        {!pathError && path && <div className="entry-preview">{t('entryPreview')}: <code>{location.origin}/{path.replace(/^\/+|\/+$/g, '')}</code></div>}
         {error && <div className="error">{error}</div>}
-        <button className="primary" disabled={busy || path.length < 4}>{busy ? '…' : t('saveEntry')}</button>
+        <button className="primary" disabled={busy || !!pathError}>{busy ? '…' : t('saveEntry')}</button>
       </form>
     </div>
   )
@@ -1196,7 +1211,9 @@ function EntrySecurityBlock({me, setMe}: {me: Me; setMe: (m: Me) => void}) {
   const [path, setPath] = useState(me.entry_path || '')
   const [decoy, setDecoy] = useState<'404' | 'dino'>((me.decoy_mode === 'dino' ? 'dino' : '404'))
   const [message, setMessage] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false)
+  const pathError = entryPathHint(path, t)
   async function save() {
+    if (pathError) { setError(pathError); return }
     setBusy(true); setError(''); setMessage('')
     try {
       const v = await post<{entry_path: string; decoy_mode: string; entry_url: string}>('/settings/entry', {path, decoy_mode: decoy})
@@ -1214,18 +1231,20 @@ function EntrySecurityBlock({me, setMe}: {me: Me; setMe: (m: Me) => void}) {
           <p style={{margin: 0, color: 'var(--muted)', fontSize: 13}}>{t('entryDesc')}</p>
         </div>
       </div>
-      <label>{t('entryPath')}<input value={path} onChange={e => setPath(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))} placeholder="s8k2m9xq" /><small style={{color: 'var(--muted)'}}>{t('entryPathHint')}</small></label>
+      <label>{t('entryPath')}
+        <input value={path} onChange={e => { setPath(e.target.value); setError('') }} placeholder="s8k2m9xq" maxLength={64} />
+        <small className={pathError ? 'field-error' : ''} style={{color: pathError ? 'var(--danger)' : 'var(--muted)'}}>{pathError || t('entryPathHint')}</small>
+      </label>
       <label style={{display: 'block', marginTop: 12}}>{t('decoyMode')}
         <select value={decoy} onChange={e => setDecoy(e.target.value as '404' | 'dino')}>
           <option value="404">{t('decoy404')}</option>
           <option value="dino">{t('decoyDino')}</option>
         </select>
-        <small style={{color: 'var(--muted)', display: 'block', marginTop: 4}}>{t('decoyHint')}</small>
       </label>
-      {path.length >= 4 && <div className="entry-preview" style={{marginTop: 12}}>{t('entryPreview')}: <code>{location.origin}/{path}</code></div>}
+      {!pathError && path && <div className="entry-preview" style={{marginTop: 12}}>{t('entryPreview')}: <code>{location.origin}/{path.replace(/^\/+|\/+$/g, '')}</code></div>}
       <div className="card-actions" style={{marginTop: 14}}>
-        <button className="btn" type="button" onClick={() => setPath(Math.random().toString(36).slice(2, 12))}>{t('randomEntry')}</button>
-        <button className="primary" disabled={busy || path.length < 4} onClick={save}>{busy ? '…' : t('saveEntry')}</button>
+        <button className="btn" type="button" onClick={() => { setPath(Math.random().toString(36).slice(2, 12)); setError('') }}>{t('randomEntry')}</button>
+        <button className="primary" disabled={busy || !!pathError} onClick={save}>{busy ? '…' : t('saveEntry')}</button>
       </div>
       {message && <div className="success" style={{marginTop: 12}}>{message}</div>}
       {error && <div className="error banner" style={{marginTop: 12}}>{error}</div>}

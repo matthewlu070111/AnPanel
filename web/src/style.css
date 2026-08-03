@@ -787,6 +787,7 @@ textarea {
   word-break: break-all;
 }
 .entry-preview code { color: var(--green-dark); font-weight: 600; }
+.field-error { color: var(--danger) !important; font-weight: 500; }
 
 /* Baota-like site settings panel — fixed size, consistent across tabs */
 .site-settings-back {

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/matthewlu070111/anpanel/internal/agent"
 	"github.com/matthewlu070111/anpanel/internal/config"
 )
 
@@ -109,41 +111,46 @@ func (s *server) saveEntrySettings(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	path := config.NormalizeEntryPath(in.Path)
+	path, reason := config.ValidateEntryPath(in.Path)
 	if path == "" {
-		apiError(w, 400, "invalid entry path: use 4–64 letters/digits/_- (not api/assets)")
+		if reason == "" {
+			reason = "路径不符合要求"
+		}
+		apiError(w, 400, reason)
 		return
 	}
 	decoy := strings.ToLower(strings.TrimSpace(in.Decoy))
 	if decoy != "dino" {
 		decoy = "404"
 	}
-	// Disallow redirect decoys explicitly.
-	if decoy == "301" || decoy == "302" || decoy == "redirect" {
-		apiError(w, 400, "redirect decoy modes are not allowed")
+	ss := current(r)
+	// Web unit mounts /etc/anpanel read-only; persist via root agent.
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	if _, err := s.agent.Action(ctx, agent.ActionRequest{
+		Kind:     "panel.set_entry",
+		Resource: path,
+		Actor:    ss.User.Username,
+		Options:  map[string]string{"path": path, "decoy_mode": decoy},
+	}); err != nil {
+		apiError(w, 500, err.Error())
 		return
 	}
+	// Reload in-memory config so the gate takes effect without restart.
 	cfg, err := config.Load()
 	if err != nil {
 		apiError(w, 500, err.Error())
 		return
 	}
-	cfg.EntryPath = path
-	cfg.DecoyMode = decoy
-	if err := config.Save(cfg); err != nil {
-		apiError(w, 500, err.Error())
-		return
-	}
 	s.cfg = cfg
-	ss := current(r)
 	_ = s.db.Audit(ss.User.Username, "settings.entry", path, "decoy="+decoy, remoteIP(r))
 	// Issue gate cookie immediately so the current browser keeps working.
 	s.setGateCookie(w, r)
 	apiJSON(w, map[string]any{
-		"ok":           true,
-		"entry_path":   path,
-		"decoy_mode":   decoy,
-		"entry_url":    "/" + path,
+		"ok":             true,
+		"entry_path":     path,
+		"decoy_mode":     decoy,
+		"entry_url":      "/" + path,
 		"must_set_entry": false,
 	})
 }

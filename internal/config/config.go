@@ -74,26 +74,34 @@ func Load() (Config, error) {
 
 // NormalizeEntryPath strips slashes and rejects unsafe characters.
 func NormalizeEntryPath(p string) string {
+	n, _ := ValidateEntryPath(p)
+	return n
+}
+
+// ValidateEntryPath returns a normalized path and an empty reason on success.
+// On failure path is empty and reason explains what failed (for UI hints).
+func ValidateEntryPath(p string) (normalized string, reason string) {
 	p = strings.Trim(strings.TrimSpace(p), "/")
 	if p == "" {
-		return ""
+		return "", "路径不能为空"
 	}
-	// only allow simple path segments
+	if len(p) < 4 {
+		return "", "路径至少 4 位"
+	}
+	if len(p) > 64 {
+		return "", "路径最多 64 位"
+	}
 	for _, c := range p {
 		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' {
 			continue
 		}
-		return ""
+		return "", "只能使用字母、数字、下划线或中划线"
 	}
-	if len(p) < 4 || len(p) > 64 {
-		return ""
-	}
-	// reserve common paths
 	switch strings.ToLower(p) {
 	case "api", "assets", "static", "favicon.ico", "robots.txt":
-		return ""
+		return "", "不能使用保留路径：" + strings.ToLower(p)
 	}
-	return p
+	return p, ""
 }
 
 func Save(cfg Config) error {

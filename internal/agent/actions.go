@@ -124,6 +124,8 @@ func executeAction(ctx context.Context, a ActionRequest) (ActionResult, error) {
 		return setSiteRewrite(ctx, a.Resource, a.Options["rewrite"], a.Options["server"])
 	case "notification.configure":
 		return configureNotifications(a.Options["json"])
+	case "panel.set_entry":
+		return setPanelEntry(a.Options["path"], a.Options["decoy_mode"])
 	case "panel.bind_domain":
 		server := a.Options["server"]
 		if server == "" {
