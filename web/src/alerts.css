@@ -98,6 +98,15 @@
   position: relative;
 }
 .terminal-screen .xterm { height: 100%; }
-.terminal-screen .xterm-viewport { scrollbar-width: thin; }
+.terminal-screen .xterm-viewport { scrollbar-width: thin; scrollbar-color: #4a4f58 transparent; }
+.terminal-screen .xterm-viewport::-webkit-scrollbar { width: 8px; }
+.terminal-screen .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
+.terminal-screen .xterm-viewport::-webkit-scrollbar-thumb {
+  background: #4a4f58;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.terminal-screen .xterm-viewport::-webkit-scrollbar-thumb:hover { background: #6b7280; background-clip: padding-box; border: 2px solid transparent; }
 .terminal-hint { padding: 9px 18px; color: #7d8592; background: #1b1e24; border-top: 1px solid #30343d; flex: none; }
 .terminal-modal .close { display: none !important; }

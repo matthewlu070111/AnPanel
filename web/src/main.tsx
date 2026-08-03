@@ -122,7 +122,7 @@ function Shell({me, setMe}: {me: Me; setMe: (m: Me | null) => void}) {
         {!me.must_change && me.must_set_entry && <ForceEntrySetup me={me} setMe={setMe} />}
         {page === 'dashboard' && <Dashboard goSettings={() => navigate('settings')} />}
         {page === 'docker' && <DockerPage />}
-        {page === 'ssh' && <HostSSH onClose={() => navigate('dashboard')} />}
+        {page === 'ssh' && <HostSSH />}
         {page === 'websites' && <Websites />}
         {page === 'files' && <FilesPage />}
         {page === 'services' && <Services />}
@@ -244,7 +244,7 @@ function Dashboard({goSettings}: {goSettings: () => void}) {
   const running = containers.filter(c => c.state === 'running').length
   return (
     <>
-      <PageHead title={t('dashboard')} hint={t('overviewHint')} />
+      <PageHead title={t('dashboard')} />
       <div className="page-body">
         {data.insecure_http && <div className="warning"><LockKeyhole /><div>{t('insecure')} <button type="button" className="link" onClick={goSettings}>{t('settings')}</button></div></div>}
         <section className="metrics">
@@ -400,9 +400,8 @@ function ContainerTerminal({container, onClose}: {container: Container; onClose:
   )
 }
 
-function HostSSH({onClose}: {onClose: () => void}) {
+function HostSSH() {
   const {t} = useI18n()
-  const [connected, setConnected] = useState(false)
   const host = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!host.current) return
@@ -411,18 +410,17 @@ function HostSSH({onClose}: {onClose: () => void}) {
     terminal.loadAddon(fit); terminal.open(host.current); fit.fit()
     const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/v1/ws/host/terminal`)
     ws.binaryType = 'arraybuffer'
-    ws.onopen = () => { setConnected(true); terminal.focus() }
+    ws.onopen = () => terminal.focus()
     ws.onmessage = e => terminal.write(typeof e.data === 'string' ? e.data : new Uint8Array(e.data))
-    ws.onclose = () => { setConnected(false); terminal.writeln(`\r\n[${t('connectionClosed')}]`) }
+    ws.onclose = () => { terminal.writeln(`\r\n[${t('connectionClosed')}]`) }
     const input = terminal.onData(data => { if (ws.readyState === WebSocket.OPEN) ws.send(data) })
     const resize = new ResizeObserver(() => fit.fit()); resize.observe(host.current)
     return () => { resize.disconnect(); input.dispose(); ws.close(); terminal.dispose() }
   }, [t])
   return <>
-    <PageHead title={t('ssh')} hint={t('sshHint')} />
+    <PageHead title={t('ssh')} />
     <div className="page-body ssh-page">
       <div className="terminal-modal host-terminal">
-        <div className="terminal-head host-terminal-head"><strong>root@localhost</strong><em className={connected ? 'online' : ''}>{connected ? t('connected') : t('connecting')}</em><button className="host-terminal-close" onClick={onClose}>{t('close')}</button></div>
         <div ref={host} className="terminal-screen" />
       </div>
     </div>
@@ -1009,7 +1007,7 @@ function Services() {
                         </>
                       )}
                       {s.can_update && <button className="btn" onClick={() => doUpdate(s)}>{t('updateSoft')}</button>}
-                      {s.installed && s.deploy === 'docker' && s.host_port && s.name !== 'php' && <button className="btn" onClick={() => setBindDlg(s)}><Link2 />{t('bindWeb')}</button>}
+                      {s.installed && s.deploy === 'docker' && s.host_port && !['php', 'mysql', 'mariadb', 'redis'].includes(s.name) && <button className="btn" onClick={() => setBindDlg(s)}><Link2 />{t('bindWeb')}</button>}
                       {!s.installed && (s.can_install || s.block_reason) && (
                         <button className="primary" onClick={() => openInstall(s)}>{s.deploy === 'docker' ? t('deployDockerApp') : t('installSoft')}</button>
                       )}
@@ -1106,7 +1104,7 @@ function InstallDialog({service, onClose, onQueued}: {service: Service; onClose:
   const blocked = !!service.block_reason
   const [hostPort, setHostPort] = useState(service.host_port || '')
   const [domain, setDomain] = useState(''), [ssl, setSSL] = useState(true), [email, setEmail] = useState('')
-  const webBindable = isDocker && service.name !== 'php'
+  const webBindable = isDocker && !['php', 'mysql', 'mariadb', 'redis'].includes(service.name)
   function methodLabel(m: string) {
     if (m === 'source') return t('methodSource')
     if (m === 'package') return t('methodPackage')
@@ -1643,35 +1641,37 @@ function UpdateBlock() {
       </div>
       {!needsUpdate && remote && <div className="success" style={{marginTop: 12}}>{t('alreadyLatest')}</div>}
       {error && <div className="error banner" style={{marginTop: 12}}>{error}</div>}
-      {updating && <UpdateProgressModal channel={channel} target={remote} onDone={() => { setUpdating(false); void post('/auth/logout', {}).finally(() => { location.href = '/' }) }} />}
+      {updating && <UpdateProgressModal channel={channel} target={remote} onDone={() => { setUpdating(false); location.reload() }} />}
     </div>
   )
 }
 
 function UpdateProgressModal({channel, target, onDone}: {channel: string; target: string; onDone: () => void}) {
   const {t} = useI18n()
-  // 0 download, 1 install, 2 restart, 3 login
+  // 0 download, 1 install, 2 restart, 3 done
   const [step, setStep] = useState(0)
   useEffect(() => {
     const timers: number[] = []
     timers.push(window.setTimeout(() => setStep(1), 2500))
     timers.push(window.setTimeout(() => setStep(2), 12000))
-    // After restart window, probe until panel answers or give up to login step.
+    // After restart window, probe until panel answers; keep the current session.
     let tries = 0
     const probe = window.setInterval(async () => {
       tries++
       if (tries < 4) return // wait ~restart window first (~16s)
       try {
-        await fetch('/api/v1/me', {credentials: 'same-origin'})
-        // any response (even 401) means web is back
-        setStep(3)
-        window.clearInterval(probe)
-        window.setTimeout(onDone, 2500)
+        const r = await fetch('/api/v1/me', {credentials: 'same-origin'})
+        // 200 = session still valid; any HTTP response means web is back
+        if (r.ok || r.status === 401) {
+          setStep(3)
+          window.clearInterval(probe)
+          window.setTimeout(onDone, 1500)
+        }
       } catch {
         if (tries > 40) {
           setStep(3)
           window.clearInterval(probe)
-          window.setTimeout(onDone, 2500)
+          window.setTimeout(onDone, 1500)
         }
       }
     }, 2000)
@@ -1683,7 +1683,7 @@ function UpdateProgressModal({channel, target, onDone}: {channel: string; target
     t('updateStepDownload'),
     t('updateStepInstall'),
     t('updateStepRestart'),
-    t('updateStepLogin'),
+    t('updateStepDone'),
   ]
   return (
     <div className="modal-back update-progress-back">

@@ -75,10 +75,34 @@ func dockerCatalogApps(dockerOK bool) []domain.DetectedService {
 	}
 	items := []item{
 		{
-			name: "3x-ui", display: "3x-ui", group: "apps",
-			image: "ghcr.io/mhsanaei/3x-ui:latest", hostPort: "2053", containerPort: "2053",
-			dockerName: "anpanel-3x-ui",
-			note:       "通过 Docker 部署 · 面板默认端口 2053",
+			name: "wordpress", display: "WordPress", group: "apps",
+			image: "wordpress:latest", hostPort: "8080", containerPort: "80",
+			dockerName: "anpanel-wordpress",
+			note:       "一键部署 WordPress · 需配合 MySQL/MariaDB 使用",
+		},
+		{
+			name: "mysql", display: "MySQL", group: "database",
+			image: "mysql:8.0", hostPort: "3306", containerPort: "3306",
+			dockerName: "anpanel-mysql",
+			note:       "通过 Docker 部署 MySQL 8 · 密码见部署日志",
+		},
+		{
+			name: "mariadb", display: "MariaDB", group: "database",
+			image: "mariadb:11", hostPort: "3307", containerPort: "3306",
+			dockerName: "anpanel-mariadb",
+			note:       "通过 Docker 部署 MariaDB · 密码见部署日志",
+		},
+		{
+			name: "redis", display: "Redis", group: "database",
+			image: "redis:7-alpine", hostPort: "6379", containerPort: "6379",
+			dockerName: "anpanel-redis",
+			note:       "通过 Docker 部署 Redis 缓存",
+		},
+		{
+			name: "phpmyadmin", display: "phpMyAdmin", group: "apps",
+			image: "phpmyadmin:latest", hostPort: "8083", containerPort: "80",
+			dockerName: "anpanel-phpmyadmin",
+			note:       "Web 数据库管理 · 连接本机已部署的 MySQL/MariaDB",
 		},
 		{
 			name: "php", display: "PHP", group: "runtime",
@@ -87,10 +111,33 @@ func dockerCatalogApps(dockerOK bool) []domain.DetectedService {
 			versions:   []string{"8.1", "8.2", "8.3", "8.4"},
 			note:       "通过 Docker 部署 PHP-FPM（非本机编译）",
 		},
+		{
+			name: "nextcloud", display: "Nextcloud", group: "apps",
+			image: "nextcloud:latest", hostPort: "8084", containerPort: "80",
+			dockerName: "anpanel-nextcloud",
+			note:       "私有云网盘 · 首次打开完成安装向导",
+		},
+		{
+			name: "gitea", display: "Gitea", group: "apps",
+			image: "gitea/gitea:latest", hostPort: "3000", containerPort: "3000",
+			dockerName: "anpanel-gitea",
+			note:       "轻量 Git 代码托管",
+		},
+		{
+			name: "portainer", display: "Portainer", group: "apps",
+			image: "portainer/portainer-ce:latest", hostPort: "9443", containerPort: "9443",
+			dockerName: "anpanel-portainer",
+			note:       "Docker 可视化管理 · HTTPS 9443",
+		},
+		{
+			name: "3x-ui", display: "3x-ui", group: "apps",
+			image: "ghcr.io/mhsanaei/3x-ui:latest", hostPort: "2053", containerPort: "2053",
+			dockerName: "anpanel-3x-ui",
+			note:       "通过 Docker 部署 · 面板默认端口 2053",
+		},
 		{name: "uptime-kuma", display: "Uptime Kuma", group: "apps", image: "louislam/uptime-kuma:1", hostPort: "3001", containerPort: "3001", dockerName: "anpanel-uptime-kuma", note: "网站与服务状态监控"},
 		{name: "adminer", display: "Adminer", group: "apps", image: "adminer:latest", hostPort: "8081", containerPort: "8080", dockerName: "anpanel-adminer", note: "轻量数据库管理工具"},
 		{name: "dozzle", display: "Dozzle", group: "apps", image: "amir20/dozzle:latest", hostPort: "8082", containerPort: "8080", dockerName: "anpanel-dozzle", note: "实时查看 Docker 容器日志"},
-		{name: "nginx-web", display: "Nginx Web", group: "apps", image: "nginx:alpine", hostPort: "8080", containerPort: "80", dockerName: "anpanel-nginx-web", note: "独立的容器化 Web 服务"},
 	}
 	out := make([]domain.DetectedService, 0, len(items))
 	for _, it := range items {

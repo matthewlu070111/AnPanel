@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"os"
@@ -690,14 +691,111 @@ FPM 监听: 宿主机 %s → 容器 9000
 			postInfo: info,
 			replace:  true,
 		}, nil
+	case "wordpress":
+		host := port(opts["host_port"], "8080")
+		info := fmt.Sprintf(`容器名: anpanel-wordpress
+访问地址: http://服务器IP:%s
+说明: 打开站点后完成 WordPress 安装向导。
+数据库: 请先在应用商店部署 MySQL 或 MariaDB，安装向导中填写数据库主机（如 host.docker.internal 或服务器局域网 IP）、库名、用户名与密码。
+`, host)
+		return dockerAppRun{
+			name: "anpanel-wordpress", image: "wordpress:latest",
+			hostPort: host, containerPort: "80",
+			volumes:  []string{"anpanel-wordpress-data:/var/www/html"},
+			postInfo: info, replace: true,
+		}, nil
+	case "mysql":
+		host := port(opts["host_port"], "3306")
+		rootPass := strings.TrimSpace(opts["root_password"])
+		if rootPass == "" {
+			rootPass = dockerRandomPassword(16)
+		}
+		info := fmt.Sprintf(`容器名: anpanel-mysql
+端口: %s → 3306
+Root 密码: %s
+连接示例: mysql -h 127.0.0.1 -P %s -u root -p
+请妥善保存上方密码。
+`, host, rootPass, host)
+		return dockerAppRun{
+			name: "anpanel-mysql", image: "mysql:8.0",
+			hostPort: host, containerPort: "3306",
+			env:       []string{"MYSQL_ROOT_PASSWORD=" + rootPass},
+			volumes:  []string{"anpanel-mysql-data:/var/lib/mysql"},
+			postInfo: info, replace: true,
+		}, nil
+	case "mariadb":
+		host := port(opts["host_port"], "3307")
+		rootPass := strings.TrimSpace(opts["root_password"])
+		if rootPass == "" {
+			rootPass = dockerRandomPassword(16)
+		}
+		info := fmt.Sprintf(`容器名: anpanel-mariadb
+端口: %s → 3306
+Root 密码: %s
+连接示例: mysql -h 127.0.0.1 -P %s -u root -p
+请妥善保存上方密码。
+`, host, rootPass, host)
+		return dockerAppRun{
+			name: "anpanel-mariadb", image: "mariadb:11",
+			hostPort: host, containerPort: "3306",
+			env:       []string{"MARIADB_ROOT_PASSWORD=" + rootPass},
+			volumes:  []string{"anpanel-mariadb-data:/var/lib/mysql"},
+			postInfo: info, replace: true,
+		}, nil
+	case "redis":
+		host := port(opts["host_port"], "6379")
+		return dockerAppRun{
+			name: "anpanel-redis", image: "redis:7-alpine",
+			hostPort: host, containerPort: "6379",
+			volumes:  []string{"anpanel-redis-data:/data"},
+			postInfo: fmt.Sprintf("Redis 已启动。连接: redis-cli -h 127.0.0.1 -p %s\n", host),
+			replace:  true,
+		}, nil
+	case "phpmyadmin":
+		host := port(opts["host_port"], "8083")
+		info := fmt.Sprintf(`容器名: anpanel-phpmyadmin
+访问地址: http://服务器IP:%s
+服务器主机: 填写宿主机可达地址（如 172.17.0.1 或本机局域网 IP）及 MySQL/MariaDB 端口。
+`, host)
+		return dockerAppRun{
+			name: "anpanel-phpmyadmin", image: "phpmyadmin:latest",
+			hostPort: host, containerPort: "80",
+			env:       []string{"PMA_ARBITRARY=1"},
+			postInfo: info, replace: true,
+		}, nil
+	case "nextcloud":
+		host := port(opts["host_port"], "8084")
+		return dockerAppRun{
+			name: "anpanel-nextcloud", image: "nextcloud:latest",
+			hostPort: host, containerPort: "80",
+			volumes:  []string{"anpanel-nextcloud-data:/var/www/html"},
+			postInfo: fmt.Sprintf("Nextcloud 已启动。访问 http://服务器IP:%s 完成安装向导。\n", host),
+			replace:  true,
+		}, nil
+	case "gitea":
+		host := port(opts["host_port"], "3000")
+		return dockerAppRun{
+			name: "anpanel-gitea", image: "gitea/gitea:latest",
+			hostPort: host, containerPort: "3000",
+			volumes:  []string{"anpanel-gitea-data:/data"},
+			postInfo: fmt.Sprintf("Gitea 已启动。访问 http://服务器IP:%s 完成安装。\n", host),
+			replace:  true,
+		}, nil
+	case "portainer":
+		host := port(opts["host_port"], "9443")
+		return dockerAppRun{
+			name: "anpanel-portainer", image: "portainer/portainer-ce:latest",
+			hostPort: host, containerPort: "9443",
+			volumes:  []string{"/var/run/docker.sock:/var/run/docker.sock", "anpanel-portainer-data:/data"},
+			postInfo: fmt.Sprintf("Portainer 已启动。访问 https://服务器IP:%s 创建管理员账号。\n", host),
+			replace:  true,
+		}, nil
 	case "uptime-kuma":
 		return dockerAppRun{name: "anpanel-uptime-kuma", image: "louislam/uptime-kuma:1", hostPort: port(opts["host_port"], "3001"), containerPort: "3001", volumes: []string{"anpanel-uptime-kuma-data:/app/data"}, postInfo: "访问部署时设置的宿主机端口，首次打开后创建管理员账号。\n", replace: true}, nil
 	case "adminer":
 		return dockerAppRun{name: "anpanel-adminer", image: "adminer:latest", hostPort: port(opts["host_port"], "8081"), containerPort: "8080", postInfo: "打开访问地址后填写数据库连接信息。\n", replace: true}, nil
 	case "dozzle":
 		return dockerAppRun{name: "anpanel-dozzle", image: "amir20/dozzle:latest", hostPort: port(opts["host_port"], "8082"), containerPort: "8080", volumes: []string{"/var/run/docker.sock:/var/run/docker.sock:ro"}, postInfo: "打开访问地址即可查看容器日志。\n", replace: true}, nil
-	case "nginx-web":
-		return dockerAppRun{name: "anpanel-nginx-web", image: "nginx:alpine", hostPort: port(opts["host_port"], "8080"), containerPort: "80", postInfo: "Nginx 容器已启动。\n", replace: true}, nil
 	case "custom":
 		container, image := strings.TrimSpace(opts["container_name"]), strings.TrimSpace(opts["image"])
 		if !customContainerRe.MatchString(container) || !safeID.MatchString(image) {
@@ -722,6 +820,23 @@ func port(value, fallback string) string {
 		return ""
 	}
 	return strconv.Itoa(n)
+}
+
+// dockerRandomPassword returns a URL-safe password for Docker app env vars (MySQL root etc.).
+func dockerRandomPassword(n int) string {
+	const alphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	if n < 8 {
+		n = 8
+	}
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback is still non-empty so containers can start.
+		return fmt.Sprintf("AnP%d", time.Now().UnixNano())
+	}
+	for i := range b {
+		b[i] = alphabet[int(b[i])%len(alphabet)]
+	}
+	return string(b)
 }
 
 func runShell(ctx context.Context, script string) (ActionResult, error) {
