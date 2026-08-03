@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -32,6 +33,12 @@ func TestParseCertificateFile(t *testing.T) {
 	}
 	if cert.Source != "test" || !cert.AutoRenew {
 		t.Fatalf("meta: %#v", cert)
+	}
+}
+
+func TestDeleteCertificateRejectsInvalidDomain(t *testing.T) {
+	if _, err := deleteCertificate(context.Background(), "../etc", "anpanel"); err == nil {
+		t.Fatal("unsafe certificate domain accepted")
 	}
 }
 

@@ -81,6 +81,8 @@ func executeAction(ctx context.Context, a ActionRequest) (ActionResult, error) {
 	case "cert.renew":
 		force := strings.EqualFold(a.Options["force"], "true") || a.Options["force"] == "1"
 		return renewCertificate(ctx, a.Resource, a.Options["tool"], force)
+	case "cert.delete":
+		return deleteCertificate(ctx, a.Resource, a.Options["source"])
 	case "files.write":
 		return writeFileContent(a.Resource, a.Options["content"])
 	case "files.mkdir":
@@ -93,8 +95,6 @@ func executeAction(ctx context.Context, a ActionRequest) (ActionResult, error) {
 		return addCrontab(ctx, a.Options["schedule"], a.Options["command"])
 	case "crontab.remove":
 		return removeCrontab(ctx, a.Resource)
-	case "docker.deploy":
-		return deployDockerAndBind(ctx, a.Options)
 	case "panel.self_update":
 		ch := a.Options["channel"]
 		if ch == "" {

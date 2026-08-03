@@ -83,10 +83,10 @@ agent 当前允许的动作如下。除此之外的 `kind` 会被拒绝。
 | `web.site.delete` | 域名 | 仅删除 `anpanel-site-*` 托管配置 |
 | `cert.issue` | 域名 | 为已有站点申请证书；`options.tool/email` |
 | `cert.renew` | 域名（空=全部 certbot） | 续期；`options.tool`、`options.force` |
-| `files.write/mkdir/delete/rename` | 路径 | 限允许根目录；`write` 用 `options.content`，`rename` 用 `options.to` |
+| `cert.delete` | 域名 | 从 Certbot/acme.sh 及证书目录同步删除；`options.source` |
+| `files.write/mkdir/delete/rename` | 路径 | 可管理根文件系统（禁止删除 `/`）；`write` 用 `options.content`，`rename` 用 `options.to` |
 | `crontab.add` | - | `options.schedule` + `options.command` |
 | `crontab.remove` | 任务 id | 删除对应 crontab 行 |
-| `docker.deploy` | 镜像 | 拉取并运行容器，可选 `domain` 创建反代站点；`host_port`/`container_port`/`env`/`enable_ssl` |
 | `panel.self_update` | `stable` 或 `prerelease` | 下载对应通道的 install.sh 并升级，保留配置 |
 | `package.install` | 软件名 | `options.method`=`source`\|`package`\|`script`\|`snap`；PHP 可带 `version`（8.1–8.4），`snap` 仅用于 Certbot。互斥：nginx↔apache、certbot↔acme.sh；compose 不可单独安装 |
 | `package.update` | 软件名 | 更新/重装；Certbot 根据可执行路径自动选择 snap、系统包或 source |

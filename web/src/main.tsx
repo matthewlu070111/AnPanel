@@ -1,10 +1,10 @@
-import React, {useEffect, useMemo, useState} from 'react'
+import React, {useEffect, useMemo, useRef, useState} from 'react'
 import {createRoot} from 'react-dom/client'
 import {
   Activity, Box, Globe2, ServerCog, ListChecks, Settings2, LogOut, RefreshCw,
   Play, Square, RotateCw, Trash2, Terminal, LockKeyhole, Languages, BellRing,
   Cpu, HardDrive, Database, Plus, FileKey2, FolderOpen, FileText, ChevronUp,
-  Pencil, Download, Search, PackageOpen, Home, ChevronRight, ShieldCheck, CheckCircle2,
+  Pencil, Download, Search, Home, ChevronRight, ShieldCheck, CheckCircle2,
 } from 'lucide-react'
 import {api, post, setCSRF} from './api'
 import {I18n, Lang, translator, useI18n} from './i18n'
@@ -16,6 +16,13 @@ import './style.css'
 import './alerts.css'
 
 type Page = 'dashboard' | 'docker' | 'websites' | 'files' | 'services' | 'tasks' | 'alerts' | 'settings'
+
+function cached<T>(key: string, fallback: T): T {
+  try { return JSON.parse(sessionStorage.getItem(key) || '') as T } catch { return fallback }
+}
+function cache(key: string, value: unknown) {
+  try { sessionStorage.setItem(key, JSON.stringify(value)) } catch { /* storage unavailable */ }
+}
 
 function App() {
   const [me, setMe] = useState<Me | null>(null)
@@ -131,24 +138,25 @@ function FirstLogin({me, setMe}: {me: Me; setMe: (m: Me) => void}) {
 type Overview = {snapshot: Snapshot; services: Service[] | null; containers: Container[] | null; insecure_http: boolean}
 function Dashboard({goSettings}: {goSettings: () => void}) {
   const {t} = useI18n()
-  const [data, setData] = useState<Overview | null>(null)
-  const [history, setHistory] = useState<Snapshot[]>([])
+  const [data, setData] = useState<Overview | null>(() => cached<Overview | null>('overview', null))
+  const [history, setHistory] = useState<Snapshot[]>(() => cached<Snapshot[]>('metrics24h', []))
   const [error, setError] = useState(''), [tick, setTick] = useState(0)
   useEffect(() => {
     let cancelled = false
     Promise.all([api<Overview>('/overview'), api<Snapshot[]>('/metrics/history?hours=24').catch(() => [] as Snapshot[])])
       .then(([ov, hist]) => {
         if (cancelled) return
-        setData({...ov, services: Array.isArray(ov.services) ? ov.services : [], containers: Array.isArray(ov.containers) ? ov.containers : []})
-        setHistory(Array.isArray(hist) ? [...hist].reverse() : [])
+        const next = {...ov, services: Array.isArray(ov.services) ? ov.services : [], containers: Array.isArray(ov.containers) ? ov.containers : []}
+        const points = Array.isArray(hist) ? [...hist].reverse() : []
+        setData(next); setHistory(points); cache('overview', next); cache('metrics24h', points)
       })
       .catch(e => { if (!cancelled) setError((e as Error).message) })
     const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/v1/ws/metrics`)
     ws.onmessage = e => {
       try {
         const m = JSON.parse(e.data) as Snapshot
-        setData(v => v ? {...v, snapshot: m} : v)
-        setHistory(v => [...v.slice(-239), m])
+        setData(v => { const next = v ? {...v, snapshot: m} : v; if (next) cache('overview', next); return next })
+        setHistory(v => { const next = [...v.slice(-239), m]; cache('metrics24h', next); return next })
       } catch { /* */ }
     }
     return () => { cancelled = true; ws.close() }
@@ -157,7 +165,7 @@ function Dashboard({goSettings}: {goSettings: () => void}) {
   if (!data) return <><PageHead title={t('dashboard')} /><div className="page-body"><Loading /></div></>
   const m = data.snapshot || ({} as Snapshot)
   const mem = pct(m.memory_used, m.memory_total), disk = pct(m.disk_used, m.disk_total)
-  const containers = data.containers || [], services = data.services || []
+  const containers = data.containers || [], services = (data.services || []).filter(s => s.installed)
   const running = containers.filter(c => c.state === 'running').length
   return (
     <>
@@ -171,14 +179,13 @@ function Dashboard({goSettings}: {goSettings: () => void}) {
           <Metric title={t('containers')} value={String(containers.length)} detail={`${running} ${t('running')}`} color="#9b59b6" icon={Box} bar={containers.length ? (running / containers.length) * 100 : 0} />
         </section>
         <section className="grid">
-          <div className="panel wide"><PanelTitle title={t('performance')} /><Spark data={history.map(x => x.cpu_percent || 0)} empty={t('collecting')} /></div>
+          <div className="panel wide"><PanelTitle title={t('performance')} /><Spark data={history} empty={t('collecting')} /></div>
           <div className="panel"><PanelTitle title={t('serviceHealth')} />
             <div className="service-list">
-              {services.map(s => <div key={s.name}><span className={`dot ${s.status === 'active' || s.status === 'available' ? 'ok' : ''}`} /><div><strong>{s.name}</strong><small>{s.version || s.status}</small></div><em>{s.status}</em></div>)}
+              {services.map(s => <div key={s.name}><span className={`dot ${s.status === 'active' || s.status === 'available' ? 'ok' : ''}`} /><div><strong>{s.display_name || s.name}</strong><small>{s.version || s.path}</small></div><em>{s.status}</em></div>)}
               {!services.length && <div className="empty">{t('noData')}</div>}
             </div>
           </div>
-          <RecentTasks />
         </section>
       </div>
     </>
@@ -193,41 +200,33 @@ function Metric({title, value, detail, color, icon: Icon, bar}: {title: string; 
     </div>
   )
 }
-function Spark({data, empty}: {data: number[]; empty: string}) {
+function Spark({data, empty}: {data: Snapshot[]; empty: string}) {
+  const {t} = useI18n()
+  const [hover, setHover] = useState<number | null>(null)
   if (data.length < 2) return <div className="empty">{empty}</div>
-  const max = Math.max(100, ...data), w = 800, h = 200
-  const points = data.map((v, i) => `${(i / (data.length - 1)) * w},${h - (v / max) * h}`).join(' ')
+  const values = data.map(x => x.cpu_percent || 0), max = Math.max(100, ...values), w = 800, h = 200
+  const points = values.map((v, i) => `${(i / (values.length - 1)) * w},${h - (v / max) * h}`).join(' ')
+  const active = hover == null ? null : data[hover]
+  const x = hover == null ? 0 : (hover / (data.length - 1)) * w
   return (
-    <svg className="chart" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
-      <defs><linearGradient id="fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#20a53a" stopOpacity=".28" /><stop offset="1" stopColor="#20a53a" stopOpacity="0" /></linearGradient></defs>
-      <polygon points={`0,${h} ${points} ${w},${h}`} fill="url(#fill)" />
-      <polyline points={points} fill="none" stroke="#20a53a" strokeWidth="2.5" vectorEffect="non-scaling-stroke" />
-    </svg>
+    <div className="chart-wrap">
+      <svg className="chart" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" onMouseLeave={() => setHover(null)} onMouseMove={e => { const r = e.currentTarget.getBoundingClientRect(); setHover(Math.max(0, Math.min(data.length - 1, Math.round(((e.clientX - r.left) / r.width) * (data.length - 1))))) }}>
+        <defs><linearGradient id="fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#20a53a" stopOpacity=".28" /><stop offset="1" stopColor="#20a53a" stopOpacity="0" /></linearGradient></defs>
+        <polygon points={`0,${h} ${points} ${w},${h}`} fill="url(#fill)" />
+        <polyline points={points} fill="none" stroke="#20a53a" strokeWidth="2.5" vectorEffect="non-scaling-stroke" />
+        {active && <><line x1={x} x2={x} y1="0" y2={h} className="chart-guide" vectorEffect="non-scaling-stroke" /><circle cx={x} cy={h - ((active.cpu_percent || 0) / max) * h} r="5" className="chart-point" vectorEffect="non-scaling-stroke" /></>}
+      </svg>
+      {active && <div className="chart-tip" style={{left: `${Math.max(10, Math.min(90, (hover! / (data.length - 1)) * 100))}%`}}><strong>{new Date(active.time).toLocaleString()}</strong><span>CPU {num(active.cpu_percent)}%</span><span>{t('memory')} {num(pct(active.memory_used, active.memory_total))}%</span><span>Load {num(active.load1)}</span></div>}
+    </div>
   )
 }
-
-type DockerTemplate = {
-  name: string
-  description: string
-  image: string
-  hostPort: string
-  containerPort: string
-  env?: string
-}
-
-const dockerTemplates: DockerTemplate[] = [
-  {name: 'Uptime Kuma', description: '轻量服务监控与状态页', image: 'louislam/uptime-kuma:1', hostPort: '3001', containerPort: '3001'},
-  {name: 'File Browser', description: '浏览器文件管理器', image: 'filebrowser/filebrowser:latest', hostPort: '8081', containerPort: '80'},
-  {name: 'Nginx', description: '高性能 Web 服务与反向代理', image: 'nginx:alpine', hostPort: '8080', containerPort: '80'},
-  {name: 'Redis', description: '内存数据库与缓存服务', image: 'redis:7-alpine', hostPort: '6379', containerPort: '6379'},
-]
 
 /* —— Docker —— */
 function DockerPage() {
   const {t} = useI18n()
-  const [items, setItems] = useState<Container[]>([]), [terminal, setTerminal] = useState<Container | null>(null)
-  const [error, setError] = useState(''), [deploy, setDeploy] = useState(false), [message, setMessage] = useState('')
-  const load = () => api<Container[]>('/docker/containers').then(v => { setItems(Array.isArray(v) ? v : []); setError('') }).catch(e => setError(e.message))
+  const [items, setItems] = useState<Container[]>(() => cached<Container[]>('containers', [])), [terminal, setTerminal] = useState<Container | null>(null)
+  const [error, setError] = useState('')
+  const load = () => api<Container[]>('/docker/containers').then(v => { const next = Array.isArray(v) ? v : []; setItems(next); cache('containers', next); setError('') }).catch(e => setError(e.message))
   useEffect(() => { void load() }, [])
   async function act(c: Container, verb: string) {
     if (verb === 'delete' && prompt(t('confirmDelete')) !== 'DELETE') return
@@ -236,13 +235,9 @@ function DockerPage() {
   }
   return (
     <>
-      <PageHead title={t('docker')} action={<div className="toolbar">
-        <button className="primary" onClick={() => setDeploy(true)}><Plus size={16} />{t('deployDocker')}</button>
-        <button className="btn" onClick={load}><RefreshCw />{t('refresh')}</button>
-      </div>} />
+      <PageHead title={t('docker')} action={<button className="btn" onClick={load}><RefreshCw />{t('refresh')}</button>} />
       <div className="page-body">
         {error && <div className="error banner">{error}</div>}
-        {message && <div className="success" style={{marginBottom: 12}}>{message}</div>}
         <div className="panel table-panel">
           <table>
             <thead><tr><th>{t('containerCol')}</th><th>{t('image')}</th><th>{t('status')}</th><th>{t('idCol')}</th><th /></tr></thead>
@@ -266,71 +261,42 @@ function DockerPage() {
           {!items.length && !error && <div className="empty">{t('noData')}</div>}
         </div>
         {terminal && <ContainerTerminal container={terminal} onClose={() => setTerminal(null)} />}
-        {deploy && <DeployWizard onClose={() => setDeploy(false)} onDone={() => { setDeploy(false); setMessage(t('deployTask')); setTimeout(load, 1500) }} />}
       </div>
     </>
   )
 }
 
-function DeployWizard({onClose, onDone, preset}: {onClose: () => void; onDone: () => void; preset?: DockerTemplate}) {
-  const {t} = useI18n()
-  const [image, setImage] = useState(preset?.image || 'nginx:alpine'), [name, setName] = useState('')
-  const [hostPort, setHostPort] = useState(preset?.hostPort || '8080'), [containerPort, setContainerPort] = useState(preset?.containerPort || '80')
-  const [env, setEnv] = useState(preset?.env || ''), [domain, setDomain] = useState(''), [enableSSL, setEnableSSL] = useState(false)
-  const [error, setError] = useState(''), [busy, setBusy] = useState(false)
-  async function submit() {
-    setBusy(true); setError('')
-    try {
-      await post('/actions', {kind: 'docker.deploy', resource: image, options: {
-        image, name, host_port: hostPort, container_port: containerPort, env, domain,
-        enable_ssl: enableSSL ? 'true' : 'false', tool: 'certbot',
-      }})
-      onDone()
-    } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
-  }
-  return (
-    <div className="modal-back"><div className="modal wizard">
-      <button className="close" onClick={onClose}>×</button>
-      <h2>{t('deployTitle')}</h2>
-      <p style={{margin: 0, color: 'var(--muted)', fontSize: 13}}>{t('deployHint')}</p>
-      <label>{t('image')}<input value={image} onChange={e => setImage(e.target.value)} /></label>
-      <label>{t('containerName')}<input value={name} onChange={e => setName(e.target.value)} placeholder="auto" /></label>
-      <div className="split" style={{gap: 12}}>
-        <label>{t('hostPort')}<input value={hostPort} onChange={e => setHostPort(e.target.value)} /></label>
-        <label>{t('containerPort')}<input value={containerPort} onChange={e => setContainerPort(e.target.value)} /></label>
-      </div>
-      <label>{t('envVars')}<input value={env} onChange={e => setEnv(e.target.value)} placeholder={t('envHint')} /></label>
-      <label>{t('bindDomainOpt')}<input value={domain} onChange={e => setDomain(e.target.value)} placeholder="app.example.com" /></label>
-      {domain && <label className="check-row"><input type="checkbox" checked={enableSSL} onChange={e => setEnableSSL(e.target.checked)} />{t('enableSSL')}</label>}
-      {error && <div className="error">{error}</div>}
-      <div className="card-actions">
-        <button className="btn" onClick={onClose}>{t('cancel')}</button>
-        <button className="primary" disabled={busy || !image.trim()} onClick={submit}>{busy ? '…' : t('deploy')}</button>
-      </div>
-    </div></div>
-  )
-}
-
 function ContainerTerminal({container, onClose}: {container: Container; onClose: () => void}) {
-  const [output, setOutput] = useState(''), [command, setCommand] = useState(''), [socket, setSocket] = useState<WebSocket | null>(null)
+  const {t} = useI18n()
+  const [output, setOutput] = useState(''), [socket, setSocket] = useState<WebSocket | null>(null), [connected, setConnected] = useState(false)
+  const screen = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/v1/ws/docker/terminal?id=${encodeURIComponent(container.id)}`)
     ws.binaryType = 'arraybuffer'
-    ws.onmessage = e => { if (typeof e.data === 'string') setOutput(v => v + e.data); else setOutput(v => v + new TextDecoder().decode(e.data)) }
-    ws.onclose = () => setOutput(v => v + '\n[connection closed]\n')
+    ws.onopen = () => setConnected(true)
+    ws.onmessage = e => { const raw = typeof e.data === 'string' ? e.data : new TextDecoder().decode(e.data); const chunk = raw.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, ''); setOutput(v => (v + chunk).slice(-100000)) }
+    ws.onclose = () => { setConnected(false); setOutput(v => v + '\n[connection closed]\n') }
     setSocket(ws)
     return () => ws.close()
   }, [container.id])
-  function send(e: React.FormEvent) {
-    e.preventDefault()
-    if (socket?.readyState === WebSocket.OPEN) { socket.send(command + '\n'); setOutput(v => v + '$ ' + command + '\n'); setCommand('') }
+  useEffect(() => { if (screen.current) screen.current.scrollTop = screen.current.scrollHeight }, [output])
+  function key(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (socket?.readyState !== WebSocket.OPEN) return
+    const special: Record<string, string> = {Enter: '\r', Tab: '\t', Backspace: '\x7f', ArrowUp: '\x1b[A', ArrowDown: '\x1b[B', ArrowRight: '\x1b[C', ArrowLeft: '\x1b[D', Escape: '\x1b'}
+    let value = special[e.key]
+    if (e.ctrlKey && /^[a-z]$/i.test(e.key)) value = String.fromCharCode(e.key.toUpperCase().charCodeAt(0) - 64)
+    if (!value && e.key.length === 1 && !e.ctrlKey && !e.metaKey) value = e.key
+    if (value) { e.preventDefault(); socket.send(value) }
   }
   return (
     <div className="modal-back"><div className="modal terminal-modal">
       <button className="close" onClick={onClose}>×</button>
-      <h2>{container.names?.[0]?.replace('/', '') || container.id.slice(0, 12)}</h2>
-      <pre>{output || 'Connecting…'}</pre>
-      <form onSubmit={send}><span>$</span><input autoFocus value={command} onChange={e => setCommand(e.target.value)} autoComplete="off" /></form>
+      <div className="terminal-head"><span className="terminal-dots"><i /><i /><i /></span><strong>{container.names?.[0]?.replace('/', '') || container.id.slice(0, 12)}</strong><em className={connected ? 'online' : ''}>{connected ? t('connected') : t('connecting')}</em></div>
+      <div ref={screen} className="terminal-screen" onClick={e => e.currentTarget.querySelector('input')?.focus()}>
+        <pre>{output || t('connecting')}</pre>
+        <input autoFocus aria-label={t('terminal')} onKeyDown={key} onPaste={e => { e.preventDefault(); if (socket?.readyState === WebSocket.OPEN) socket.send(e.clipboardData.getData('text')) }} />
+      </div>
+      <small className="terminal-hint">{t('terminalHint')}</small>
     </div></div>
   )
 }
@@ -339,11 +305,11 @@ function ContainerTerminal({container, onClose}: {container: Container; onClose:
 function Websites() {
   const {t} = useI18n()
   const [tab, setTab] = useState<'sites' | 'certs'>('sites')
-  const [items, setItems] = useState<Website[]>([]), [certs, setCerts] = useState<Certificate[]>([])
+  const [items, setItems] = useState<Website[]>(() => cached<Website[]>('websites', [])), [certs, setCerts] = useState<Certificate[]>(() => cached<Certificate[]>('certificates', []))
   const [edit, setEdit] = useState<{path: string; content: string; title: string} | null>(null)
   const [wizard, setWizard] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState('')
-  const loadSites = () => api<Website[]>('/websites').then(v => { setItems(Array.isArray(v) ? v : []); setError('') }).catch(e => setError(e.message))
-  const loadCerts = () => api<Certificate[]>('/certificates').then(v => { setCerts(Array.isArray(v) ? v : []); setError('') }).catch(e => setError(e.message))
+  const loadSites = () => api<Website[]>('/websites').then(v => { const next = Array.isArray(v) ? v : []; setItems(next); cache('websites', next); setError('') }).catch(e => setError(e.message))
+  const loadCerts = () => api<Certificate[]>('/certificates').then(v => { const next = Array.isArray(v) ? v : []; setCerts(next); cache('certificates', next); setError('') }).catch(e => setError(e.message))
   const load = () => { void loadSites(); void loadCerts() }
   useEffect(() => { load() }, [])
 
@@ -360,7 +326,7 @@ function Websites() {
   }
   async function issueSSL(site: Website) {
     const domain = site.domains?.[0]; if (!domain) return
-    await post('/actions', {kind: 'cert.issue', resource: domain, options: {tool: 'certbot'}})
+    await post('/actions', {kind: 'cert.issue', resource: domain, options: {tool: 'certbot', server: site.server}})
     setMessage(t('issueTask'))
   }
   async function setRewrite(site: Website) {
@@ -378,12 +344,19 @@ function Websites() {
     const domain = site.domains?.[0]; if (!domain) return
     if (!site.source_path.includes('anpanel-site-')) { setError(t('onlyManaged')); return }
     if (prompt(t('confirmDelete')) !== 'DELETE') return
-    await post('/actions', {kind: 'web.site.delete', resource: domain, options: {}})
+    await post('/actions', {kind: 'web.site.delete', resource: domain, options: {server: site.server}})
     setMessage(t('success')); setTimeout(loadSites, 1200)
   }
   async function renew(domain = '', force = false) {
     await post('/actions', {kind: 'cert.renew', resource: domain, options: {force: force ? 'true' : 'false'}})
     setMessage(t('renewTask')); setTimeout(loadCerts, 2000)
+  }
+  async function deleteCert(cert: Certificate) {
+    if (prompt(t('confirmDelete')) !== 'DELETE') return
+    try {
+      await post('/actions', {kind: 'cert.delete', resource: cert.domain, options: {source: cert.source}})
+      setMessage(t('certDeleted')); setTimeout(loadCerts, 800)
+    } catch (e) { setError((e as Error).message) }
   }
   function protoLabel(s: Website) {
     if (s.has_http && s.has_https) return t('bothHttpHttps')
@@ -408,22 +381,24 @@ function Websites() {
 
         {tab === 'sites' && (
           <>
-            <div className="panel table-panel">
-              <table>
-                <thead><tr><th>{t('domainLabel')}</th><th>{t('status')}</th><th>{t('proxy')}</th><th>{t('actions')}</th></tr></thead>
+            <div className="panel table-panel website-table">
+              <table className="site-table">
+                <thead><tr><th>{t('domainLabel')}</th><th>{t('siteType')}</th><th>{t('siteDirectory')}</th><th>{t('status')}</th><th>SSL</th><th>{t('actions')}</th></tr></thead>
                 <tbody>
                   {items.map(s => (
                     <tr key={s.id}>
                       <td>
-                        <strong>{s.domains?.join(' ') || s.name}</strong>
+                        <strong className="site-domain"><span className={`dot ${s.enabled ? 'ok' : ''}`} />{s.domains?.join(' ') || s.name}</strong>
                         <div style={{fontSize: 12, color: 'var(--muted)', marginTop: 2}}>{s.listen?.join(', ')}</div>
                       </td>
-                      <td><span className={`pill ${(s.has_https || s.tls) ? 'green' : ''}`}>{protoLabel(s)}</span></td>
+                      <td><span className={`server-tag ${s.server === 'apache' ? 'apache' : ''}`}>{s.server}</span><small className="site-kind">{s.proxy_target ? t('siteTypeProxy') : t('siteTypeStatic')}</small></td>
                       <td style={{maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>
                         {s.proxy_target || s.doc_root || t('staticSite')}
                       </td>
+                      <td><span className={`pill ${s.enabled ? 'green' : ''}`}>{s.enabled ? t('active') : t('inactive')}</span></td>
+                      <td><span className={`pill ${(s.has_https || s.tls) ? 'green' : ''}`}>{protoLabel(s)}</span></td>
                       <td>
-                        <div className="toolbar" style={{justifyContent: 'flex-end'}}>
+                        <div className="site-ops">
                           {s.domains?.[0] && !(s.has_https || s.tls) && <button className="btn" onClick={() => issueSSL(s)}><FileKey2 size={14} />{t('issueSSL')}</button>}
                           {s.source_path.includes('anpanel-site-') && <button className="btn" onClick={() => setRewrite(s)}>{t('setRewrite')}</button>}
                           <button className="btn" onClick={() => openConfig(s)}>{t('advancedConfig')}</button>
@@ -458,6 +433,7 @@ function Websites() {
                       <td className="actions">
                         <button title={t('renew')} onClick={() => renew(c.domain, false)}><RefreshCw /></button>
                         <button title={t('renewForce')} onClick={() => renew(c.domain, true)}><RotateCw /></button>
+                        <button className="danger" title={t('remove')} onClick={() => deleteCert(c)}><Trash2 /></button>
                       </td>
                     </tr>
                   )
@@ -485,7 +461,6 @@ function Websites() {
 
 function SiteWizard({onClose, onCreated}: {onClose: () => void; onCreated: () => void}) {
   const {t} = useI18n()
-  const [step, setStep] = useState(0)
   const [siteType, setSiteType] = useState<'proxy' | 'static'>('proxy')
   const [domain, setDomain] = useState(''), [root, setRoot] = useState(''), [proxyPass, setProxyPass] = useState('http://127.0.0.1:3000')
   const [rewrite, setRewrite] = useState('none'), [rules, setRules] = useState<RewriteRule[]>([])
@@ -505,61 +480,24 @@ function SiteWizard({onClose, onCreated}: {onClose: () => void; onCreated: () =>
       onCreated()
     } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
-  const canNext = step === 0 || (step === 1 && domain.trim().includes('.') && (siteType === 'proxy' ? proxyPass.trim().startsWith('http') : true))
+  const valid = domain.trim().includes('.') && (siteType === 'static' || proxyPass.trim().startsWith('http'))
   return (
-    <div className="modal-back"><div className="modal wizard">
+    <div className="modal-back"><div className="modal wizard site-create-modal">
       <button className="close" onClick={onClose}>×</button>
       <h2>{t('siteWizard')}</h2>
-      <div className="wizard-steps">
-        <span className={step === 0 ? 'active' : step > 0 ? 'done' : ''}>{siteType === 'proxy' ? t('siteTypeProxy') : t('siteTypeStatic')}</span>
-        <span className={step === 1 ? 'active' : step > 1 ? 'done' : ''}>{t('domainLabel')}</span>
-        <span className={step === 2 ? 'active' : ''}>{t('rewrite')} / SSL</span>
+      <p className="form-hint">{t('siteCreateHint')}</p>
+      <div className="site-type-tabs"><button className={siteType === 'proxy' ? 'active' : ''} onClick={() => setSiteType('proxy')}>{t('siteTypeProxy')}</button><button className={siteType === 'static' ? 'active' : ''} onClick={() => setSiteType('static')}>{t('siteTypeStatic')}</button></div>
+      <div className="site-form-grid">
+        <label className="full">{t('domainLabel')}<input value={domain} onChange={e => setDomain(e.target.value)} placeholder="example.com" autoFocus /><small>{t('domainHintSite')}</small></label>
+        {siteType === 'proxy' ? <label className="full">{t('proxyPass')}<input value={proxyPass} onChange={e => setProxyPass(e.target.value)} /><small>{t('proxyPassHint')}</small></label> : <label className="full">{t('docRoot')}<input value={root} onChange={e => setRoot(e.target.value)} placeholder={`/var/www/${domain || 'example.com'}`} /><small>{t('docRootHint')}</small></label>}
+        {siteType === 'static' && <label>{t('rewrite')}<select value={rewrite} onChange={e => setRewrite(e.target.value)}>{(rules.length ? rules : [{id: 'none', name: 'none', description: '', nginx: '', apache: ''}]).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}</select></label>}
+        <label className="ssl-switch"><input type="checkbox" checked={enableSSL} onChange={e => setEnableSSL(e.target.checked)} /><span><strong>{t('enableSSL')}</strong><small>{t('sslCreateHint')}</small></span></label>
+        {enableSSL && <><label>{t('acmeTool')}<select value={tool} onChange={e => setTool(e.target.value)}><option value="certbot">certbot</option><option value="acme.sh">acme.sh</option></select></label><label>{t('email')}<input type="email" value={email} onChange={e => setEmail(e.target.value)} /></label></>}
       </div>
-      {step === 0 && (
-        <div className="type-cards">
-          <button type="button" className={`type-card ${siteType === 'proxy' ? 'selected' : ''}`} onClick={() => setSiteType('proxy')}><strong>{t('siteTypeProxy')}</strong><span>{t('siteTypeProxyHint')}</span></button>
-          <button type="button" className={`type-card ${siteType === 'static' ? 'selected' : ''}`} onClick={() => setSiteType('static')}><strong>{t('siteTypeStatic')}</strong><span>{t('siteTypeStaticHint')}</span></button>
-        </div>
-      )}
-      {step === 1 && (
-        <>
-          <label>{t('domainLabel')}<input value={domain} onChange={e => setDomain(e.target.value)} placeholder="example.com" autoFocus /></label>
-          <small style={{color: 'var(--muted)'}}>{t('domainHintSite')}</small>
-          {siteType === 'proxy' ? (
-            <label>{t('proxyPass')}<input value={proxyPass} onChange={e => setProxyPass(e.target.value)} /><small style={{color: 'var(--muted)', fontWeight: 400}}>{t('proxyPassHint')}</small></label>
-          ) : (
-            <label>{t('docRoot')}<input value={root} onChange={e => setRoot(e.target.value)} placeholder={`/var/www/${domain || 'example.com'}`} /><small style={{color: 'var(--muted)', fontWeight: 400}}>{t('docRootHint')}</small></label>
-          )}
-        </>
-      )}
-      {step === 2 && (
-        <>
-          {siteType === 'static' && (
-            <label>{t('rewrite')}
-              <select value={rewrite} onChange={e => setRewrite(e.target.value)}>
-                {(rules.length ? rules : [{id: 'none', name: 'none', description: '', nginx: '', apache: ''}]).map(r => (
-                  <option key={r.id} value={r.id}>{r.name}{r.description ? ` — ${r.description}` : ''}</option>
-                ))}
-              </select>
-              <small style={{color: 'var(--muted)', fontWeight: 400}}>{t('rewriteHint')}</small>
-            </label>
-          )}
-          <label className="check-row"><input type="checkbox" checked={enableSSL} onChange={e => setEnableSSL(e.target.checked)} />{t('enableSSL')}</label>
-          {enableSSL && (
-            <>
-              <label>{t('acmeTool')}<select value={tool} onChange={e => setTool(e.target.value)}><option value="certbot">certbot</option><option value="acme.sh">acme.sh</option></select></label>
-              <label>{t('email')}<input type="email" value={email} onChange={e => setEmail(e.target.value)} /></label>
-              <div className="steps"><ol><li>{t('step1')}</li><li>{t('step2')}</li><li>{t('step3')}</li></ol></div>
-            </>
-          )}
-        </>
-      )}
       {error && <div className="error">{error}</div>}
-      <div className="card-actions">
+      <div className="card-actions modal-actions">
         <button type="button" className="btn" onClick={onClose}>{t('cancel')}</button>
-        {step > 0 && <button type="button" className="btn" onClick={() => setStep(s => s - 1)}>{t('prev')}</button>}
-        {step < 2 && <button type="button" className="primary" disabled={!canNext} onClick={() => setStep(s => s + 1)}>{t('next')}</button>}
-        {step === 2 && <button type="button" className="primary" disabled={busy || !domain.trim()} onClick={submit}>{busy ? '…' : t('createSite')}</button>}
+        <button type="button" className="primary" disabled={busy || !valid} onClick={submit}>{busy ? '…' : t('createSite')}</button>
       </div>
     </div></div>
   )
@@ -692,11 +630,10 @@ function FilesPage() {
 /* —— App store —— */
 function Services() {
   const {t} = useI18n()
-  const [items, setItems] = useState<Service[]>([]), [error, setError] = useState(''), [message, setMessage] = useState('')
+  const [items, setItems] = useState<Service[]>(() => cached<Service[]>('services', [])), [error, setError] = useState(''), [message, setMessage] = useState('')
   const [installDlg, setInstallDlg] = useState<Service | null>(null)
-  const [dockerDlg, setDockerDlg] = useState<DockerTemplate | null>(null)
-  const [query, setQuery] = useState(''), [category, setCategory] = useState<'all' | 'system' | 'docker'>('all')
-  const load = () => api<Service[]>('/services').then(v => { setItems(Array.isArray(v) ? v : []); setError('') }).catch(e => setError(e.message))
+  const [query, setQuery] = useState('')
+  const load = () => api<Service[]>('/services').then(v => { const next = Array.isArray(v) ? v : []; setItems(next); cache('services', next); setError('') }).catch(e => setError(e.message))
   useEffect(() => { void load() }, [])
   async function act(s: Service, verb: string) {
     let resource = s.name
@@ -712,7 +649,6 @@ function Services() {
   }
   const q = query.trim().toLowerCase()
   const systemApps = items.filter(s => !q || `${s.name} ${s.display_name || ''}`.toLowerCase().includes(q))
-  const dockerApps = dockerTemplates.filter(s => !q || `${s.name} ${s.description} ${s.image}`.toLowerCase().includes(q))
   return (
     <>
       <PageHead title={t('services')} hint={t('appStoreHint')} action={<button className="btn" onClick={load}><RefreshCw />{t('refresh')}</button>} />
@@ -721,21 +657,8 @@ function Services() {
         {message && <div className="success" style={{marginBottom: 12}}>{message}</div>}
         <div className="market-tools">
           <div className="market-search"><Search /><input value={query} onChange={e => setQuery(e.target.value)} placeholder={t('searchApps')} /></div>
-          <div className="market-categories">
-            {(['all', 'system', 'docker'] as const).map(c => <button key={c} className={category === c ? 'active' : ''} onClick={() => setCategory(c)}>{t(c === 'all' ? 'allApps' : c === 'system' ? 'systemApps' : 'dockerApps')}</button>)}
-          </div>
         </div>
-        {(category === 'all' || category === 'docker') && dockerApps.length > 0 && <section className="market-section">
-          <h2>{t('dockerApps')}<small>{t('oneClickDocker')}</small></h2>
-          <div className="app-grid">
-            {dockerApps.map((app, index) => <article className="app-card" key={app.image}>
-              <span className={`app-logo tone-${index % 4}`}><PackageOpen /></span>
-              <div className="app-copy"><h3>{app.name}</h3><p>{app.description}</p><code>{app.image}</code></div>
-              <button className="primary" onClick={() => setDockerDlg(app)}>{t('install')}</button>
-            </article>)}
-          </div>
-        </section>}
-        {(category === 'all' || category === 'system') && <section className="market-section">
+        <section className="market-section">
           <h2>{t('systemApps')}<small>{t('systemAppsHint')}</small></h2>
           <div className="app-grid">
             {systemApps.map(s => (
@@ -766,8 +689,8 @@ function Services() {
                   </div>
             ))}
           </div>
-        </section>}
-        {!systemApps.length && !dockerApps.length && <div className="empty">{t('noData')}</div>}
+        </section>
+        {!systemApps.length && <div className="empty">{t('noData')}</div>}
         {installDlg && (
           <InstallDialog
             service={installDlg}
@@ -775,7 +698,6 @@ function Services() {
             onDone={() => { setInstallDlg(null); setMessage(t('installQueued')); setTimeout(load, 1500) }}
           />
         )}
-        {dockerDlg && <DeployWizard preset={dockerDlg} onClose={() => setDockerDlg(null)} onDone={() => { setDockerDlg(null); setMessage(t('deployTask')) }} />}
       </div>
     </>
   )
@@ -916,20 +838,6 @@ function Tasks() {
         )}
       </div>
     </>
-  )
-}
-
-function RecentTasks() {
-  const {t} = useI18n()
-  const [items, setItems] = useState<Task[]>([])
-  useEffect(() => { api<Task[]>('/tasks').then(v => setItems(Array.isArray(v) ? v : [])).catch(() => setItems([])) }, [])
-  return (
-    <div className="panel"><PanelTitle title={t('recentTasks')} />
-      <div className="timeline compact">
-        {items.slice(0, 5).map(x => <div key={x.id}><span className={`task-dot ${x.status}`} /><div><strong>{x.kind}</strong><small>{x.status}</small></div></div>)}
-        {!items.length && <div className="empty">{t('noData')}</div>}
-      </div>
-    </div>
   )
 }
 

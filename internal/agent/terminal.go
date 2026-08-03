@@ -27,6 +27,9 @@ func (s *server) terminal(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "docker", "exec", "-i", id, "/bin/sh")
+	if _, err := exec.LookPath("script"); err == nil {
+		cmd = exec.CommandContext(ctx, "script", "-qefc", "docker exec -it "+id+" /bin/sh", "/dev/null")
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(err.Error()))

@@ -195,6 +195,37 @@ func renewCertificate(ctx context.Context, domain, tool string, force bool) (Act
 	}
 }
 
+func deleteCertificate(ctx context.Context, domain, source string) (ActionResult, error) {
+	domain = normalizedDomain(domain)
+	if !domainName.MatchString(domain) {
+		return ActionResult{}, errors.New("invalid domain name")
+	}
+	switch source {
+	case "letsencrypt":
+		certbot := certbotPath()
+		if certbot == "" {
+			return ActionResult{}, errors.New("certbot is not installed")
+		}
+		return run(ctx, certbot, "delete", "--cert-name", domain, "--non-interactive")
+	case "acme.sh", "anpanel":
+		if acme := acmePath(); acme != "" {
+			_, _ = run(ctx, acme, "--remove", "-d", domain)
+		}
+		for _, dir := range []string{
+			filepath.Join("/root/.acme.sh", domain), filepath.Join("/root/.acme.sh", domain+"_ecc"),
+			filepath.Join("/home/anpanel/.acme.sh", domain), filepath.Join("/home/anpanel/.acme.sh", domain+"_ecc"),
+			filepath.Join("/etc/anpanel/certs", domain),
+		} {
+			if err := os.RemoveAll(dir); err != nil {
+				return ActionResult{}, err
+			}
+		}
+		return ActionResult{Output: "certificate deleted: " + domain}, nil
+	default:
+		return ActionResult{}, errors.New("unknown certificate source")
+	}
+}
+
 func tryReloadWebServers(ctx context.Context) error {
 	var last error
 	for _, s := range []string{"nginx", "apache"} {
