@@ -294,11 +294,19 @@ function DockerPage() {
   const {t} = useI18n()
   const [items, setItems] = useState<Container[]>(() => cached<Container[]>('containers', [])), [terminal, setTerminal] = useState<Container | null>(null)
   const [error, setError] = useState('')
+  const [pendingDelete, setPendingDelete] = useState<Container | null>(null)
   const load = () => api<Container[]>('/docker/containers').then(v => { const next = Array.isArray(v) ? v : []; setItems(next); cache('containers', next); setError('') }).catch(e => setError(e.message))
   useEffect(() => { void load() }, [])
   async function act(c: Container, verb: string) {
-    if (verb === 'delete' && prompt(t('confirmDelete')) !== 'DELETE') return
+    if (verb === 'delete') { setPendingDelete(c); return }
     await post('/actions', {kind: `docker.container.${verb}`, resource: c.id, options: {}})
+    setTimeout(load, 800)
+  }
+  async function confirmDeleteContainer() {
+    if (!pendingDelete) return
+    const c = pendingDelete
+    setPendingDelete(null)
+    await post('/actions', {kind: 'docker.container.delete', resource: c.id, options: {}})
     setTimeout(load, 800)
   }
   return (
@@ -329,6 +337,16 @@ function DockerPage() {
           {!items.length && !error && <div className="empty">{t('noData')}</div>}
         </div>
         {terminal && <ContainerTerminal container={terminal} onClose={() => setTerminal(null)} />}
+        {pendingDelete && (
+          <ConfirmModal
+            title={t('remove')}
+            message={`${t('confirmDeleteContainer')}\n${pendingDelete.names?.[0]?.replace('/', '') || pendingDelete.id.slice(0, 12)}`}
+            confirmLabel={t('remove')}
+            danger
+            onCancel={() => setPendingDelete(null)}
+            onConfirm={() => void confirmDeleteContainer()}
+          />
+        )}
       </div>
     </>
   )
@@ -1415,7 +1433,8 @@ function UpdateBlock() {
   const {t} = useI18n()
   const [info, setInfo] = useState<SystemInfo | null>(null)
   const [channel, setChannel] = useState<'stable' | 'prerelease'>('stable')
-  const [message, setMessage] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false)
+  const [error, setError] = useState(''), [busy, setBusy] = useState(false)
+  const [updating, setUpdating] = useState(false)
 
   const load = () => api<SystemInfo>('/system').then(v => {
     setInfo(v)
@@ -1424,13 +1443,18 @@ function UpdateBlock() {
 
   useEffect(() => { void load() }, [])
 
+  const remote = channel === 'prerelease' ? (info?.latest_prerelease || '') : (info?.latest_stable || '')
+  const needsUpdate = !!(remote && info?.version && remote !== info.version)
+
   async function doUpdate() {
-    if (!confirm(t(channel === 'prerelease' ? 'confirmPreUpdate' : 'confirmStableUpdate'))) return
-    setBusy(true); setError(''); setMessage('')
+    if (!needsUpdate) return
+    setBusy(true); setError('')
+    setUpdating(true)
     try {
       await post('/actions', {kind: 'panel.self_update', resource: channel, options: {channel}})
-      setMessage(t('updateTask'))
-    } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
+    } catch {
+      // Server may die mid-update during restart; progress modal continues on timers.
+    } finally { setBusy(false) }
   }
 
   return (
@@ -1444,7 +1468,12 @@ function UpdateBlock() {
           <div><strong>{t('currentVersion')}:</strong> {info.version}</div>
           <div><strong>{t('webServerUsed')}:</strong> {info.web_server || '-'}</div>
           <div><strong>{t('latestStable')}:</strong> {info.latest_stable || '-'}</div>
+          <div><strong>{t('latestPre')}:</strong> {info.latest_prerelease || '-'}</div>
           <div><strong>{t('channel')}:</strong> {t(channel === 'prerelease' ? 'channelPre' : 'channelStable')}</div>
+          <div>
+            <strong>{t('updateCheck')}:</strong>{' '}
+            {remote ? (needsUpdate ? <span className="days-warn">{t('updateAvailable')} ({remote})</span> : <span className="days-ok">{t('alreadyLatest')}</span>) : t('updateUnknown')}
+          </div>
         </div>
       )}
       <label className="update-channel">{t('channel')}
@@ -1456,10 +1485,91 @@ function UpdateBlock() {
       </label>
       <div className="card-actions" style={{marginTop: 14}}>
         <button className="btn" onClick={load}><RefreshCw size={14} />{t('checkUpdate')}</button>
-        <button className="primary" disabled={busy} onClick={doUpdate}>{busy ? '…' : t('doUpdate')}</button>
+        <button className="primary" disabled={busy || !needsUpdate} onClick={doUpdate}>{busy ? '…' : t('doUpdate')}</button>
       </div>
-      {message && <div className="success" style={{marginTop: 12}}>{message}</div>}
+      {!needsUpdate && remote && <div className="success" style={{marginTop: 12}}>{t('alreadyLatest')}</div>}
       {error && <div className="error banner" style={{marginTop: 12}}>{error}</div>}
+      {updating && <UpdateProgressModal channel={channel} target={remote} onDone={() => { setUpdating(false); location.href = '/'; }} />}
+    </div>
+  )
+}
+
+function UpdateProgressModal({channel, target, onDone}: {channel: string; target: string; onDone: () => void}) {
+  const {t} = useI18n()
+  // 0 download, 1 install, 2 restart, 3 login
+  const [step, setStep] = useState(0)
+  useEffect(() => {
+    const timers: number[] = []
+    timers.push(window.setTimeout(() => setStep(1), 2500))
+    timers.push(window.setTimeout(() => setStep(2), 12000))
+    // After restart window, probe until panel answers or give up to login step.
+    let tries = 0
+    const probe = window.setInterval(async () => {
+      tries++
+      if (tries < 4) return // wait ~restart window first (~16s)
+      try {
+        await fetch('/api/v1/me', {credentials: 'same-origin'})
+        // any response (even 401) means web is back
+        setStep(3)
+        window.clearInterval(probe)
+        window.setTimeout(onDone, 2500)
+      } catch {
+        if (tries > 40) {
+          setStep(3)
+          window.clearInterval(probe)
+          window.setTimeout(onDone, 2500)
+        }
+      }
+    }, 2000)
+    timers.push(window.setTimeout(() => setStep(2), 14000))
+    return () => { timers.forEach(clearTimeout); window.clearInterval(probe) }
+  }, [onDone])
+
+  const steps = [
+    t('updateStepDownload'),
+    t('updateStepInstall'),
+    t('updateStepRestart'),
+    t('updateStepLogin'),
+  ]
+  return (
+    <div className="modal-back update-progress-back">
+      <div className="modal update-progress-modal">
+        <h2>{t('updatingTitle')}</h2>
+        <p className="form-hint">{t(channel === 'prerelease' ? 'channelPre' : 'channelStable')}{target ? ` · ${target}` : ''}</p>
+        <ol className="update-steps">
+          {steps.map((label, i) => (
+            <li key={label} className={i < step ? 'done' : i === step ? 'active' : ''}>
+              <span className="step-num">{i < step ? '✓' : i + 1}</span>
+              <span>{label}</span>
+              {i === step && i < 3 && <em className="step-spin" />}
+            </li>
+          ))}
+        </ol>
+        <p className="form-hint" style={{marginBottom: 0}}>{t('updateDoNotClose')}</p>
+      </div>
+    </div>
+  )
+}
+
+function ConfirmModal({title, message, confirmLabel, danger, onCancel, onConfirm}: {
+  title: string
+  message: string
+  confirmLabel: string
+  danger?: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  const {t} = useI18n()
+  return (
+    <div className="modal-back">
+      <div className="modal confirm-modal">
+        <h2>{title}</h2>
+        <p className="confirm-msg">{message}</p>
+        <div className="card-actions">
+          <button type="button" className="btn" onClick={onCancel}>{t('cancel')}</button>
+          <button type="button" className="primary" style={danger ? {background: 'var(--danger)', borderColor: 'var(--danger)'} : undefined} onClick={onConfirm}>{confirmLabel}</button>
+        </div>
+      </div>
     </div>
   )
 }

@@ -288,6 +288,18 @@ const zh = {
   deployFailedHint: '部署失败，请根据日志排查后重试。',
   close: '关闭',
   runInBackground: '后台运行',
+  latestPre: '最新预发布',
+  updateCheck: '更新检测',
+  updateAvailable: '有新版本',
+  alreadyLatest: '已是最新版本',
+  updateUnknown: '暂时无法获取远端版本',
+  confirmDeleteContainer: '确定删除该容器吗？此操作不可恢复。',
+  updatingTitle: '正在更新 AnPanel',
+  updateStepDownload: '下载更新脚本',
+  updateStepInstall: '安装更新',
+  updateStepRestart: '重启服务',
+  updateStepLogin: '即将进入登录页',
+  updateDoNotClose: '请勿关闭此窗口或刷新页面',
 } as const
 
 
@@ -577,6 +589,18 @@ const en: Record<keyof typeof zh, string> = {
   deployFailedHint: 'Deploy failed. See log for details.',
   close: 'Close',
   runInBackground: 'Run in background',
+  latestPre: 'Latest prerelease',
+  updateCheck: 'Update check',
+  updateAvailable: 'Update available',
+  alreadyLatest: 'Already up to date',
+  updateUnknown: 'Could not fetch remote version',
+  confirmDeleteContainer: 'Delete this container? This cannot be undone.',
+  updatingTitle: 'Updating AnPanel',
+  updateStepDownload: 'Download update script',
+  updateStepInstall: 'Install update',
+  updateStepRestart: 'Restart services',
+  updateStepLogin: 'Opening sign-in page',
+  updateDoNotClose: 'Do not close or refresh this window',
 }
 
 const messages = {zh, en}

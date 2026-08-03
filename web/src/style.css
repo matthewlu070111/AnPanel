@@ -24,10 +24,14 @@
   box-sizing: border-box;
 }
 
-body {
+html, body, #root {
+  height: 100%;
   margin: 0;
+  overflow: hidden;
+}
+
+body {
   min-width: 320px;
-  min-height: 100vh;
   background: var(--bg);
 }
 
@@ -81,7 +85,9 @@ a {
 }
 
 .login {
-  min-height: 100vh;
+  height: 100%;
+  min-height: 100%;
+  overflow: auto;
   display: grid;
   place-items: center;
   background: linear-gradient(160deg, #eef7f0 0%, #f0f2f5 45%, #e8eef5 100%);
@@ -224,17 +230,19 @@ select:focus {
 .shell {
   display: grid;
   grid-template-columns: 200px 1fr;
-  min-height: 100vh;
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
 }
 
 aside {
-  position: sticky;
-  top: 0;
-  height: 100vh;
+  height: 100%;
+  max-height: 100%;
   background: var(--sidebar);
   display: flex;
   flex-direction: column;
   z-index: 5;
+  overflow: hidden;
 }
 
 aside .brand {
@@ -350,8 +358,12 @@ nav button.active {
 .content {
   padding: 0;
   min-width: 0;
+  min-height: 0;
+  height: 100%;
+  max-height: 100%;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .page-body {
@@ -359,6 +371,9 @@ nav button.active {
   max-width: 1400px;
   width: 100%;
   margin: 0 auto;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 
 header.page-head {
@@ -370,6 +385,7 @@ header.page-head {
   background: var(--panel);
   border-bottom: 1px solid var(--line);
   min-height: 56px;
+  flex: none;
 }
 
 header.page-head h1 {
@@ -788,6 +804,34 @@ textarea {
 }
 .entry-preview code { color: var(--green-dark); font-weight: 600; }
 .field-error { color: var(--danger) !important; font-weight: 500; }
+.confirm-modal { width: min(420px, 100%) !important; }
+.confirm-msg { margin: 0; color: #606266; font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
+.update-progress-back { z-index: 50; }
+.update-progress-modal { width: min(480px, 100%) !important; pointer-events: auto; }
+.update-steps { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.update-steps li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #f5f7fa;
+  color: #909399;
+  font-size: 14px;
+}
+.update-steps li.active { background: var(--green-soft); color: var(--green-dark); font-weight: 600; }
+.update-steps li.done { color: var(--green-dark); }
+.update-steps .step-num {
+  width: 24px; height: 24px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: #e4e7ed; color: #606266; font-size: 12px; font-weight: 700; flex: none;
+}
+.update-steps li.active .step-num, .update-steps li.done .step-num { background: var(--green); color: #fff; }
+.step-spin {
+  width: 14px; height: 14px; margin-left: auto;
+  border: 2px solid #b3e0bc; border-top-color: var(--green);
+  border-radius: 50%; animation: spin 0.8s linear infinite;
+}
 .deploy-progress-modal {
   width: min(720px, 100%) !important;
   max-height: min(80vh, 700px);
@@ -825,8 +869,12 @@ textarea {
   backdrop-filter: blur(4px);
 }
 .site-settings-panel {
-  width: min(920px, 100%);
+  width: min(920px, calc(100vw - 40px));
+  min-width: min(920px, calc(100vw - 40px));
+  max-width: min(920px, calc(100vw - 40px));
   height: min(640px, calc(100vh - 40px));
+  min-height: min(640px, calc(100vh - 40px));
+  max-height: min(640px, calc(100vh - 40px));
   margin: 0;
   background: #fff;
   border-radius: 12px;
@@ -835,6 +883,7 @@ textarea {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  box-sizing: border-box;
 }
 .site-settings-head {
   display: flex;
@@ -918,8 +967,10 @@ textarea {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 14px 16px;
-  max-width: 680px;
+  width: 100%;
+  max-width: 100%;
   align-content: start;
+  box-sizing: border-box;
 }
 .site-settings-form .full { grid-column: 1 / -1; }
 .site-settings-form label small { color: var(--muted); font-weight: 400; }

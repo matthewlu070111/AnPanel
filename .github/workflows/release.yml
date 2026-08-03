@@ -205,7 +205,8 @@ jobs:
           SOURCE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           alias_tag=prerelease-latest
-          notes="This moving alias installs AnPanel $VERSION. Use the immutable $VERSION release for reproducible deployments."
+          # VERSION= line is machine-readable for the panel update checker.
+          notes="$(printf 'VERSION=%s\n\nThis moving alias installs AnPanel %s.\nUse the immutable %s release for reproducible deployments.\n' "$VERSION" "$VERSION" "$VERSION")"
           if gh release view "$alias_tag" >/dev/null 2>&1; then
             gh release upload "$alias_tag" dist/install.sh --clobber
             gh release edit "$alias_tag" \
