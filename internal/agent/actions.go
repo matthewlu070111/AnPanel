@@ -99,6 +99,10 @@ func executeAction(ctx context.Context, a ActionRequest) (ActionResult, error) {
 		return deletePath(a.Resource)
 	case "files.rename":
 		return renamePath(a.Resource, a.Options["to"])
+	case "files.copy":
+		return copyPath(a.Resource, a.Options["to"])
+	case "files.move":
+		return movePath(a.Resource, a.Options["to"])
 	case "crontab.add":
 		return addCrontab(ctx, a.Options["schedule"], a.Options["command"])
 	case "crontab.remove":

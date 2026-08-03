@@ -57,6 +57,8 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	mux.HandleFunc("/v1/certificates", s.auth(s.certificates))
 	mux.HandleFunc("/v1/files", s.auth(s.files))
 	mux.HandleFunc("/v1/files/content", s.auth(s.fileContent))
+	mux.HandleFunc("/v1/files/upload", s.auth(s.fileUpload))
+	mux.HandleFunc("/v1/files/download", s.auth(s.fileDownload))
 	mux.HandleFunc("/v1/crontab", s.auth(s.crontab))
 	mux.HandleFunc("/v1/system", s.auth(s.system))
 	mux.HandleFunc("/v1/action", s.auth(s.action))
@@ -171,6 +173,47 @@ func (s *server) fileContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonOut(w, map[string]string{"path": r.URL.Query().Get("path"), "content": content})
+}
+
+func (s *server) fileUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	dir := r.URL.Query().Get("path")
+	name := r.URL.Query().Get("name")
+	overwrite := r.URL.Query().Get("overwrite") == "1" || strings.EqualFold(r.URL.Query().Get("overwrite"), "true")
+	// Cap body slightly above max so saveUploadedFile can report a clean error.
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes+1024)
+	size := r.ContentLength
+	if size <= 0 {
+		size = -1
+	}
+	dst, err := saveUploadedFile(dir, name, r.Body, size, overwrite)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	s.logger.Info("file uploaded", "path", dst)
+	jsonOut(w, map[string]string{"path": dst})
+}
+
+func (s *server) fileDownload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	f, size, name, err := openDownload(r.URL.Query().Get("path"))
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	defer f.Close()
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+strings.ReplaceAll(name, `"`, "")+`"`)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	http.ServeContent(w, r, name, time.Time{}, f)
 }
 func (s *server) crontab(w http.ResponseWriter, r *http.Request) {
 	items, err := listCrontab(r.Context())

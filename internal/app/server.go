@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -95,6 +97,8 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/certificates", s.withSession(s.proxyGet("/v1/certificates"), false))
 	mux.HandleFunc("/api/v1/files", s.withSession(s.proxyQuery("/v1/files"), false))
 	mux.HandleFunc("/api/v1/files/content", s.withSession(s.proxyQuery("/v1/files/content"), false))
+	mux.HandleFunc("/api/v1/files/upload", s.withSession(s.fileUpload, true))
+	mux.HandleFunc("/api/v1/files/download", s.withSession(s.fileDownload, false))
 	mux.HandleFunc("/api/v1/crontab", s.withSession(s.proxyGet("/v1/crontab"), false))
 	mux.HandleFunc("/api/v1/system", s.withSession(s.systemInfo, false))
 	mux.HandleFunc("/api/v1/tasks", s.withSession(s.tasks, false))
@@ -327,6 +331,83 @@ func (s *server) proxyQuery(path string) http.HandlerFunc {
 		}
 		apiJSON(w, out)
 	}
+}
+
+// fileUpload accepts multipart form field "file" (or "files") and streams to agent.
+// form fields: path (target directory), overwrite ("1" to replace).
+func (s *server) fileUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		apiError(w, 405, "method not allowed")
+		return
+	}
+	// Allow slightly over 200MiB multipart overhead.
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		apiError(w, 400, "invalid multipart form")
+		return
+	}
+	dir := strings.TrimSpace(r.FormValue("path"))
+	if dir == "" {
+		dir = "/"
+	}
+	overwrite := r.FormValue("overwrite") == "1" || strings.EqualFold(r.FormValue("overwrite"), "true")
+	files := r.MultipartForm.File["file"]
+	if len(files) == 0 {
+		files = r.MultipartForm.File["files"]
+	}
+	if len(files) == 0 {
+		apiError(w, 400, "no file uploaded")
+		return
+	}
+	ss := current(r)
+	uploaded := make([]string, 0, len(files))
+	for _, fh := range files {
+		if fh.Size > 200<<20 {
+			apiError(w, 400, "file larger than 200MB: "+fh.Filename)
+			return
+		}
+		src, err := fh.Open()
+		if err != nil {
+			apiError(w, 400, err.Error())
+			return
+		}
+		name := filepath.Base(fh.Filename)
+		err = s.agent.UploadFile(r.Context(), dir, name, overwrite, src, fh.Size)
+		src.Close()
+		if err != nil {
+			apiError(w, 502, err.Error())
+			return
+		}
+		uploaded = append(uploaded, name)
+		_ = s.db.Audit(ss.User.Username, "files.upload", dir+"/"+name, name, remoteIP(r))
+	}
+	apiJSON(w, map[string]any{"ok": true, "files": uploaded, "path": dir})
+}
+
+func (s *server) fileDownload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		apiError(w, 405, "method not allowed")
+		return
+	}
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		apiError(w, 400, "path required")
+		return
+	}
+	body, size, name, err := s.agent.OpenDownload(r.Context(), path)
+	if err != nil {
+		apiError(w, 502, err.Error())
+		return
+	}
+	defer body.Close()
+	ss := current(r)
+	_ = s.db.Audit(ss.User.Username, "files.download", path, name, remoteIP(r))
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+strings.ReplaceAll(name, `"`, "")+`"`)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if size > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	}
+	_, _ = io.Copy(w, body)
 }
 
 func (s *server) systemInfo(w http.ResponseWriter, r *http.Request) {
@@ -772,6 +853,8 @@ func taskSummary(kind, resource string, opts map[string]string) string {
 		"files.mkdir":              "新建目录",
 		"files.delete":             "删除文件",
 		"files.rename":             "重命名文件",
+		"files.copy":               "复制文件",
+		"files.move":               "移动文件",
 		"crontab.add":              "添加计划任务",
 		"crontab.remove":           "删除计划任务",
 		"docker.deploy":            "部署 Docker 应用",

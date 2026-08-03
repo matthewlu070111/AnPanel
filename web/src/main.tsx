@@ -8,9 +8,9 @@ import {
   Play, Square, RotateCw, Trash2, Terminal, LockKeyhole, Languages, BellRing,
   Cpu, HardDrive, Database, Plus, FileKey2, FolderOpen, FileText, ChevronUp,
   Pencil, Download, Search, Home, ChevronRight, ShieldCheck, CheckCircle2,
-  KeyRound, Link2, Network,
+  KeyRound, Link2, Network, Upload, Copy, Scissors, ClipboardPaste, FolderPlus,
 } from 'lucide-react'
-import {api, post, setCSRF} from './api'
+import {api, downloadURL, post, setCSRF, uploadFile} from './api'
 import {I18n, Lang, translator, useI18n} from './i18n'
 import type {
   AlertRule, Audit, Certificate, Container, CronJob, FileEntry, Me, RewriteRule, Service,
@@ -812,24 +812,50 @@ function SiteWizard({onClose, onCreated}: {onClose: () => void; onCreated: () =>
 }
 
 /* —— Files —— */
+type FileClip = {mode: 'copy' | 'cut'; items: FileEntry[]}
+type FileMenu = {x: number; y: number; target: FileEntry | null}
+type NameDialog = {mode: 'newFile' | 'newFolder' | 'rename'; initial: string; file?: FileEntry}
+type UploadJob = {id: string; name: string; pct: number; status: 'uploading' | 'done' | 'error'; error?: string}
+
 function FilesPage() {
   const {t} = useI18n()
   const [path, setPath] = useState('/'), [address, setAddress] = useState('/')
   const [items, setItems] = useState<FileEntry[]>([])
   const [error, setError] = useState(''), [message, setMessage] = useState('')
   const [edit, setEdit] = useState<{path: string; content: string} | null>(null)
+  const [selected, setSelected] = useState<string | null>(null)
+  const [menu, setMenu] = useState<FileMenu | null>(null)
+  const [clip, setClip] = useState<FileClip | null>(null)
+  const [nameDlg, setNameDlg] = useState<NameDialog | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<FileEntry | null>(null)
+  const [uploads, setUploads] = useState<UploadJob[]>([])
+  const [dragging, setDragging] = useState(false)
+  const fileInput = useRef<HTMLInputElement>(null)
+  const dragDepth = useRef(0)
 
   const load = (p = path) => api<FileEntry[]>(`/files?path=${encodeURIComponent(p)}`)
-    .then(v => { setItems(Array.isArray(v) ? v : []); setPath(p); setAddress(p); setError('') })
+    .then(v => { setItems(Array.isArray(v) ? v : []); setPath(p); setAddress(p); setError(''); setSelected(null) })
     .catch(e => setError(e.message))
 
   useEffect(() => { void load('/') }, [])
+  useEffect(() => {
+    if (!menu) return
+    const close = () => setMenu(null)
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }
+    addEventListener('click', close)
+    addEventListener('scroll', close, true)
+    addEventListener('keydown', onKey)
+    return () => { removeEventListener('click', close); removeEventListener('scroll', close, true); removeEventListener('keydown', onKey) }
+  }, [menu])
 
   function parentOf(p: string) {
     const norm = p.replace(/\\/g, '/').replace(/\/$/, '') || '/'
     if (norm === '/') return '/'
     const parts = norm.split('/').filter(Boolean)
     return parts.length <= 1 ? '/' : '/' + parts.slice(0, -1).join('/')
+  }
+  function joinPath(dir: string, name: string) {
+    return `${dir.replace(/\/$/, '')}/${name}`.replace(/\/+/g, '/') || '/'
   }
 
   async function openFile(f: FileEntry) {
@@ -842,37 +868,130 @@ function FilesPage() {
 
   async function saveFile() {
     if (!edit) return
-    await post('/actions', {kind: 'files.write', resource: edit.path, options: {content: edit.content}})
-    setEdit(null); setMessage(t('success')); void load()
+    try {
+      await post('/actions', {kind: 'files.write', resource: edit.path, options: {content: edit.content}})
+      setEdit(null); setMessage(t('success')); void load()
+    } catch (e) { setError((e as Error).message) }
   }
 
-  async function newFolder() {
-    const name = prompt(t('newFolder'))
-    if (!name) return
-    await post('/actions', {kind: 'files.mkdir', resource: `${path.replace(/\/$/, '')}/${name}`, options: {}})
-    setTimeout(() => load(), 500)
+  function openNameDialog(mode: NameDialog['mode'], file?: FileEntry) {
+    setMenu(null)
+    setNameDlg({mode, initial: mode === 'rename' && file ? file.name : '', file})
   }
 
-  async function newFile() {
-    const name = prompt(t('newFile'))
-    if (!name) return
-    const fp = `${path.replace(/\/$/, '')}/${name}`
-    await post('/actions', {kind: 'files.write', resource: fp, options: {content: ''}})
-    setTimeout(() => load(), 500)
+  async function submitNameDialog(name: string) {
+    if (!nameDlg) return
+    const clean = name.trim()
+    if (!clean || clean.includes('/') || clean.includes('\\')) {
+      setError(t('enterName')); return
+    }
+    try {
+      if (nameDlg.mode === 'newFolder') {
+        await post('/actions', {kind: 'files.mkdir', resource: joinPath(path, clean), options: {}})
+      } else if (nameDlg.mode === 'newFile') {
+        await post('/actions', {kind: 'files.write', resource: joinPath(path, clean), options: {content: ''}})
+      } else if (nameDlg.mode === 'rename' && nameDlg.file) {
+        if (clean === nameDlg.file.name) { setNameDlg(null); return }
+        await post('/actions', {kind: 'files.rename', resource: nameDlg.file.path, options: {to: joinPath(path, clean)}})
+      }
+      setNameDlg(null)
+      setTimeout(() => load(), 400)
+    } catch (e) { setError((e as Error).message) }
   }
 
-  async function remove(f: FileEntry) {
-    if (prompt(t('confirmDelete')) !== 'DELETE') return
-    await post('/actions', {kind: 'files.delete', resource: f.path, options: {}})
-    setTimeout(() => load(), 500)
+  async function confirmDelete() {
+    if (!deleteTarget) return
+    try {
+      await post('/actions', {kind: 'files.delete', resource: deleteTarget.path, options: {}})
+      setDeleteTarget(null)
+      setTimeout(() => load(), 400)
+    } catch (e) { setError((e as Error).message) }
   }
 
-  async function rename(f: FileEntry) {
-    const name = prompt(t('rename'), f.name)
-    if (!name || name === f.name) return
-    const to = `${path.replace(/\/$/, '')}/${name}`
-    await post('/actions', {kind: 'files.rename', resource: f.path, options: {to}})
-    setTimeout(() => load(), 500)
+  function downloadFile(f: FileEntry) {
+    if (f.is_dir) return
+    const a = document.createElement('a')
+    a.href = downloadURL(f.path)
+    a.download = f.name
+    a.rel = 'noopener'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  }
+
+  async function copyPathToClipboard(p: string) {
+    try {
+      await navigator.clipboard.writeText(p)
+      setMessage(t('pathCopied'))
+    } catch {
+      setMessage(p)
+    }
+  }
+
+  function setClipboard(mode: 'copy' | 'cut', f: FileEntry) {
+    setClip({mode, items: [f]})
+    setMessage(mode === 'copy' ? t('clipCopied') : t('clipCut'))
+    setMenu(null)
+  }
+
+  async function pasteHere() {
+    if (!clip?.items.length) return
+    setMenu(null)
+    try {
+      for (const item of clip.items) {
+        const dest = joinPath(path, item.name)
+        const kind = clip.mode === 'cut' ? 'files.move' : 'files.copy'
+        await post('/actions', {kind, resource: item.path, options: {to: dest}})
+      }
+      if (clip.mode === 'cut') setClip(null)
+      setMessage(t('pasteDone'))
+      setTimeout(() => load(), 500)
+    } catch (e) { setError((e as Error).message) }
+  }
+
+  async function runUploads(fileList: FileList | File[]) {
+    const list = Array.from(fileList)
+    if (!list.length) return
+    for (const file of list) {
+      const id = `${Date.now()}-${file.name}-${Math.random().toString(36).slice(2, 7)}`
+      setUploads(u => [...u, {id, name: file.name, pct: 0, status: 'uploading'}])
+      try {
+        await uploadFile(path, file, {
+          onProgress: pct => setUploads(u => u.map(j => j.id === id ? {...j, pct} : j)),
+        })
+        setUploads(u => u.map(j => j.id === id ? {...j, pct: 100, status: 'done'} : j))
+      } catch (e) {
+        setUploads(u => u.map(j => j.id === id ? {...j, status: 'error', error: (e as Error).message} : j))
+      }
+    }
+    setMessage(t('uploadDone'))
+    setTimeout(() => load(), 400)
+    setTimeout(() => setUploads(u => u.filter(j => j.status === 'uploading')), 4000)
+  }
+
+  function onContextMenu(e: React.MouseEvent, target: FileEntry | null) {
+    e.preventDefault()
+    e.stopPropagation()
+    if (target) setSelected(target.path)
+    const pad = 8
+    const mw = 180, mh = target ? 280 : 200
+    let x = e.clientX, y = e.clientY
+    if (x + mw > window.innerWidth - pad) x = window.innerWidth - mw - pad
+    if (y + mh > window.innerHeight - pad) y = window.innerHeight - mh - pad
+    setMenu({x, y, target})
+  }
+
+  function onDragEnter(e: React.DragEvent) {
+    e.preventDefault(); dragDepth.current++; setDragging(true)
+  }
+  function onDragLeave(e: React.DragEvent) {
+    e.preventDefault(); dragDepth.current = Math.max(0, dragDepth.current - 1)
+    if (dragDepth.current === 0) setDragging(false)
+  }
+  function onDragOver(e: React.DragEvent) { e.preventDefault() }
+  function onDrop(e: React.DragEvent) {
+    e.preventDefault(); dragDepth.current = 0; setDragging(false)
+    if (e.dataTransfer.files?.length) void runUploads(e.dataTransfer.files)
   }
 
   const crumbs = path.split('/').filter(Boolean)
@@ -880,9 +999,12 @@ function FilesPage() {
   return (
     <>
       <PageHead title={t('filesTitle')} action={<div className="toolbar">
-        <button className="btn" onClick={newFolder}><Plus size={14} />{t('newFolder')}</button>
-        <button className="btn" onClick={newFile}><FileText size={14} />{t('newFile')}</button>
+        <button className="primary" onClick={() => fileInput.current?.click()}><Upload size={14} />{t('upload')}</button>
+        <button className="btn" onClick={() => openNameDialog('newFolder')}><FolderPlus size={14} />{t('newFolder')}</button>
+        <button className="btn" onClick={() => openNameDialog('newFile')}><FileText size={14} />{t('newFile')}</button>
+        {clip && <button className="btn" onClick={() => void pasteHere()}><ClipboardPaste size={14} />{t('paste')}</button>}
         <button className="btn" onClick={() => load()}><RefreshCw />{t('refresh')}</button>
+        <input ref={fileInput} type="file" multiple hidden onChange={e => { if (e.target.files?.length) void runUploads(e.target.files); e.target.value = '' }} />
       </div>} />
       <div className="page-body">
         <div className="file-browser-bar">
@@ -895,14 +1017,38 @@ function FilesPage() {
         </div>
         {error && <div className="error banner">{error}</div>}
         {message && <div className="success" style={{marginBottom: 12}}>{message}</div>}
-        <div className="panel table-panel file-panel">
+        {!!uploads.length && (
+          <div className="upload-list">
+            {uploads.map(j => (
+              <div key={j.id} className={`upload-item ${j.status}`}>
+                <div className="upload-meta"><strong>{j.name}</strong><span>{j.status === 'error' ? (j.error || t('uploadFailed')) : j.status === 'done' ? t('uploadDone') : `${t('uploadProgress')} ${j.pct}%`}</span></div>
+                <div className="upload-bar"><i style={{width: `${j.pct}%`}} /></div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div
+          className={`panel table-panel file-panel ${dragging ? 'file-drop-active' : ''}`}
+          onContextMenu={e => onContextMenu(e, null)}
+          onDragEnter={onDragEnter}
+          onDragLeave={onDragLeave}
+          onDragOver={onDragOver}
+          onDrop={onDrop}
+        >
+          {dragging && <div className="file-drop-hint">{t('uploadDrop')}</div>}
           <table className="file-table">
-            <thead><tr><th>{t('path')}</th><th>{t('size')}</th><th>{t('permissions')}</th><th>{t('modified')}</th><th /></tr></thead>
+            <thead><tr><th>{t('path')}</th><th>{t('size')}</th><th>{t('permissions')}</th><th>{t('modified')}</th></tr></thead>
             <tbody>
               {items.map(f => (
-                <tr key={f.path}>
+                <tr
+                  key={f.path}
+                  className={selected === f.path ? 'selected' : ''}
+                  onClick={() => setSelected(f.path)}
+                  onDoubleClick={() => void openFile(f)}
+                  onContextMenu={e => onContextMenu(e, f)}
+                >
                   <td>
-                    <button className="file-name" onClick={() => openFile(f)}>
+                    <button className="file-name" onClick={e => { e.stopPropagation(); void openFile(f) }}>
                       <span className={f.is_dir ? 'folder' : ''}>{f.is_dir ? <FolderOpen /> : <FileText />}</span>
                       {f.name}
                     </button>
@@ -910,24 +1056,70 @@ function FilesPage() {
                   <td>{f.is_dir ? '-' : bytes(f.size)}</td>
                   <td><code className="file-mode">{f.mode}</code></td>
                   <td>{f.mod_time ? new Date(f.mod_time).toLocaleString() : '-'}</td>
-                  <td className="actions">
-                    {!f.is_dir && <button title={t('edit')} onClick={() => openFile(f)}><Pencil /></button>}
-                    <button title={t('rename')} onClick={() => rename(f)}><FileText /></button>
-                    <button className="danger" title={t('remove')} onClick={() => remove(f)}><Trash2 /></button>
-                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
           {!items.length && !error && <div className="empty">{t('noData')}</div>}
         </div>
+
+        {menu && (
+          <div className="file-ctx-menu" style={{left: menu.x, top: menu.y}} onClick={e => e.stopPropagation()} onContextMenu={e => e.preventDefault()}>
+            {menu.target ? (
+              <>
+                <button onClick={() => { setMenu(null); void openFile(menu.target!) }}>{menu.target.is_dir ? t('open') : t('edit')}</button>
+                {!menu.target.is_dir && <button onClick={() => { setMenu(null); downloadFile(menu.target!) }}><Download size={14} />{t('download')}</button>}
+                <button onClick={() => openNameDialog('rename', menu.target!)}><Pencil size={14} />{t('rename')}</button>
+                <button onClick={() => { void copyPathToClipboard(menu.target!.path); setMenu(null) }}><Copy size={14} />{t('copyPath')}</button>
+                <hr />
+                <button onClick={() => setClipboard('copy', menu.target!)}><Copy size={14} />{t('copy')}</button>
+                <button onClick={() => setClipboard('cut', menu.target!)}><Scissors size={14} />{t('cut')}</button>
+                <hr />
+                <button className="danger" onClick={() => { setDeleteTarget(menu.target); setMenu(null) }}><Trash2 size={14} />{t('remove')}</button>
+              </>
+            ) : (
+              <>
+                <button onClick={() => { setMenu(null); void load() }}><RefreshCw size={14} />{t('refresh')}</button>
+                <button onClick={() => openNameDialog('newFolder')}><FolderPlus size={14} />{t('newFolder')}</button>
+                <button onClick={() => openNameDialog('newFile')}><FileText size={14} />{t('newFile')}</button>
+                <button onClick={() => { setMenu(null); fileInput.current?.click() }}><Upload size={14} />{t('upload')}</button>
+                <button disabled={!clip} onClick={() => void pasteHere()}><ClipboardPaste size={14} />{t('paste')}</button>
+              </>
+            )}
+          </div>
+        )}
+
+        {nameDlg && (
+          <div className="modal-back">
+            <form className="modal" onSubmit={e => { e.preventDefault(); void submitNameDialog((e.currentTarget.elements.namedItem('fname') as HTMLInputElement).value) }}>
+              <h2>{nameDlg.mode === 'rename' ? t('rename') : nameDlg.mode === 'newFolder' ? t('newFolder') : t('newFile')}</h2>
+              <label>{t('nameLabel')}<input name="fname" autoFocus defaultValue={nameDlg.initial} placeholder={t('enterName')} /></label>
+              <div className="card-actions">
+                <button type="button" className="btn" onClick={() => setNameDlg(null)}>{t('cancel')}</button>
+                <button type="submit" className="primary">{t('save')}</button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {deleteTarget && (
+          <ConfirmModal
+            title={t('confirmRemove')}
+            message={`${t('confirmRemoveMsg')}\n${deleteTarget.path}`}
+            confirmLabel={t('remove')}
+            danger
+            onCancel={() => setDeleteTarget(null)}
+            onConfirm={() => void confirmDelete()}
+          />
+        )}
+
         {edit && (
           <div className="modal-back"><div className="modal editor">
             <button className="close" onClick={() => setEdit(null)}>×</button>
             <h2>{edit.path}</h2>
             <small>{t('uploadHint')}</small>
             <textarea spellCheck={false} value={edit.content} onChange={e => setEdit({...edit, content: e.target.value})} />
-            <button className="primary" onClick={saveFile}>{t('save')}</button>
+            <button className="primary" onClick={() => void saveFile()}>{t('save')}</button>
           </div></div>
         )}
       </div>
@@ -1797,6 +1989,10 @@ function taskTitle(task: {kind: string; summary: string; resource?: string}, lan
     'files.mkdir': {zh: '新建目录', en: 'Create folder'},
     'files.delete': {zh: '删除文件', en: 'Delete file'},
     'files.rename': {zh: '重命名', en: 'Rename'},
+    'files.copy': {zh: '复制文件', en: 'Copy file'},
+    'files.move': {zh: '移动文件', en: 'Move file'},
+    'files.upload': {zh: '上传文件', en: 'Upload file'},
+    'files.download': {zh: '下载文件', en: 'Download file'},
     'crontab.add': {zh: '添加计划任务', en: 'Add cron job'},
     'crontab.remove': {zh: '删除计划任务', en: 'Remove cron job'},
     'docker.deploy': {zh: '部署 Docker', en: 'Deploy Docker'},

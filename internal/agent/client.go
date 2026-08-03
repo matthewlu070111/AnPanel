@@ -8,7 +8,9 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/matthewlu070111/anpanel/internal/config"
@@ -69,4 +71,70 @@ func (c *Client) Snapshot(ctx context.Context) (domain.HostSnapshot, error) {
 	var m domain.HostSnapshot
 	err := c.Get(ctx, "/v1/metrics", &m)
 	return m, err
+}
+
+// UploadFile streams file bytes to the agent upload endpoint.
+func (c *Client) UploadFile(ctx context.Context, dir, name string, overwrite bool, body io.Reader, size int64) error {
+	q := url.Values{}
+	q.Set("path", dir)
+	q.Set("name", name)
+	if overwrite {
+		q.Set("overwrite", "1")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix/v1/files/upload?"+q.Encode(), body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/octet-stream")
+	if size > 0 {
+		req.ContentLength = size
+	}
+	cli := &http.Client{Transport: c.http.Transport, Timeout: 15 * time.Minute}
+	resp, err := cli.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("agent: %s: %s", resp.Status, string(b))
+	}
+	return nil
+}
+
+// OpenDownload opens a streaming download from the agent. Caller must close the body.
+func (c *Client) OpenDownload(ctx context.Context, path string) (body io.ReadCloser, contentLength int64, filename string, err error) {
+	q := url.Values{}
+	q.Set("path", path)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix/v1/files/download?"+q.Encode(), nil)
+	if err != nil {
+		return nil, 0, "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	cli := &http.Client{Transport: c.http.Transport, Timeout: 15 * time.Minute}
+	resp, err := cli.Do(req)
+	if err != nil {
+		return nil, 0, "", err
+	}
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		resp.Body.Close()
+		return nil, 0, "", fmt.Errorf("agent: %s: %s", resp.Status, string(b))
+	}
+	filename = pathBaseName(path)
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+		if i := strings.Index(cd, "filename="); i >= 0 {
+			filename = strings.Trim(cd[i+9:], `"`)
+		}
+	}
+	return resp.Body, resp.ContentLength, filename, nil
+}
+
+func pathBaseName(p string) string {
+	p = strings.ReplaceAll(p, "\\", "/")
+	if i := strings.LastIndex(p, "/"); i >= 0 && i < len(p)-1 {
+		return p[i+1:]
+	}
+	return p
 }

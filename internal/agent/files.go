@@ -13,7 +13,10 @@ import (
 	"github.com/matthewlu070111/anpanel/internal/domain"
 )
 
-const maxFileBytes = 2 << 20 // 2 MiB editor limit
+const (
+	maxFileBytes   = 2 << 20   // 2 MiB editor limit
+	maxUploadBytes = 200 << 20 // 200 MiB upload limit
+)
 
 var fileRoots = []string{"/"}
 
@@ -217,4 +220,181 @@ func copyRemove(src, dst string) error {
 		return err
 	}
 	return os.Remove(src)
+}
+
+func copyPath(from, to string) (ActionResult, error) {
+	src, err := safeFilePath(from)
+	if err != nil {
+		return ActionResult{}, err
+	}
+	dst, err := safeFilePath(to)
+	if err != nil {
+		return ActionResult{}, err
+	}
+	if src == dst {
+		return ActionResult{}, errors.New("source and destination are the same")
+	}
+	// Refuse to copy a directory into itself.
+	if rel, e := filepath.Rel(src, dst); e == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return ActionResult{}, errors.New("cannot copy a path into itself")
+	}
+	if _, err := os.Stat(dst); err == nil {
+		return ActionResult{}, errors.New("destination already exists")
+	} else if !os.IsNotExist(err) {
+		return ActionResult{}, err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return ActionResult{}, err
+	}
+	if err := copyRecursive(src, dst); err != nil {
+		_ = os.RemoveAll(dst)
+		return ActionResult{}, err
+	}
+	return ActionResult{Output: "copied to " + dst}, nil
+}
+
+func movePath(from, to string) (ActionResult, error) {
+	// Prefer rename; fall back to copy+delete for cross-device moves.
+	if _, err := renamePath(from, to); err == nil {
+		return ActionResult{Output: "moved to " + to}, nil
+	} else {
+		if _, err2 := copyPath(from, to); err2 != nil {
+			return ActionResult{}, err
+		}
+		if _, err2 := deletePath(from); err2 != nil {
+			return ActionResult{}, fmt.Errorf("copied but failed to remove source: %w", err2)
+		}
+		return ActionResult{Output: "moved to " + to}, nil
+	}
+}
+
+func copyRecursive(src, dst string) error {
+	st, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if st.IsDir() {
+		if err := os.MkdirAll(dst, st.Mode().Perm()); err != nil {
+			return err
+		}
+		entries, err := os.ReadDir(src)
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			if err := copyRecursive(filepath.Join(src, e.Name()), filepath.Join(dst, e.Name())); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, st.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
+}
+
+// sanitizeUploadName returns a single path segment filename or an error.
+func sanitizeUploadName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	name = filepath.Base(filepath.Clean("/" + strings.ReplaceAll(name, "\\", "/")))
+	if name == "" || name == "." || name == ".." {
+		return "", errors.New("invalid file name")
+	}
+	if strings.Contains(name, "/") || strings.Contains(name, "\\") {
+		return "", errors.New("invalid file name")
+	}
+	return name, nil
+}
+
+// saveUploadedFile streams r into dir/name with optional overwrite. size may be -1 if unknown.
+func saveUploadedFile(dir, name string, r io.Reader, size int64, overwrite bool) (string, error) {
+	dirPath, err := safeFilePath(dir)
+	if err != nil {
+		return "", err
+	}
+	st, err := os.Stat(dirPath)
+	if err != nil {
+		return "", err
+	}
+	if !st.IsDir() {
+		return "", errors.New("upload path is not a directory")
+	}
+	name, err = sanitizeUploadName(name)
+	if err != nil {
+		return "", err
+	}
+	if size > maxUploadBytes {
+		return "", fmt.Errorf("file larger than %d bytes", maxUploadBytes)
+	}
+	dst := filepath.Join(dirPath, name)
+	dst, err = safeFilePath(dst)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(dst); err == nil && !overwrite {
+		return "", errors.New("file already exists")
+	} else if err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	var limited io.Reader
+	if size < 0 {
+		limited = io.LimitReader(r, maxUploadBytes+1)
+	} else {
+		limited = io.LimitReader(r, size)
+	}
+	tmp := dst + ".anpanel.upload.tmp"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return "", err
+	}
+	written, err := io.Copy(f, limited)
+	closeErr := f.Close()
+	if err != nil {
+		_ = os.Remove(tmp)
+		return "", err
+	}
+	if closeErr != nil {
+		_ = os.Remove(tmp)
+		return "", closeErr
+	}
+	if size < 0 && written > maxUploadBytes {
+		_ = os.Remove(tmp)
+		return "", fmt.Errorf("file larger than %d bytes", maxUploadBytes)
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		_ = os.Remove(tmp)
+		return "", err
+	}
+	return dst, nil
+}
+
+// openDownload validates path and opens a regular file for streaming download.
+func openDownload(path string) (file *os.File, size int64, name string, err error) {
+	p, err := safeFilePath(path)
+	if err != nil {
+		return nil, 0, "", err
+	}
+	st, err := os.Stat(p)
+	if err != nil {
+		return nil, 0, "", err
+	}
+	if st.IsDir() {
+		return nil, 0, "", errors.New("path is a directory")
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		return nil, 0, "", err
+	}
+	return f, st.Size(), filepath.Base(p), nil
 }

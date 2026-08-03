@@ -36,6 +36,8 @@
 | `GET /certificates` | 证书列表（Let’s Encrypt / AnPanel / acme.sh），含到期天数 |
 | `GET /files?path=` | 文件管理：从 `/` 开始列出文件系统条目 |
 | `GET /files/content?path=` | 读取文本文件内容（≤2MB） |
+| `POST /files/upload` | 多文件上传（multipart：`path`、`file`/`files`，可选 `overwrite=1`；单文件 ≤200MB） |
+| `GET /files/download?path=` | 流式下载文件（attachment） |
 | `GET /crontab` | root 用户 crontab 列表 |
 | `GET /system` | 版本、更新通道、Web 服务与远端 release 信息 |
 | `POST /actions` | 创建异步系统任务 |
@@ -84,7 +86,7 @@ agent 当前允许的动作如下。除此之外的 `kind` 会被拒绝。
 | `cert.issue` | 域名 | 为已有站点申请证书；`options.tool/email` |
 | `cert.renew` | 域名（空=全部 certbot） | 续期；`options.tool`、`options.force` |
 | `cert.delete` | 域名 | 从 Certbot/acme.sh 及证书目录同步删除；`options.source` |
-| `files.write/mkdir/delete/rename` | 路径 | 可管理根文件系统（禁止删除 `/`）；`write` 用 `options.content`，`rename` 用 `options.to` |
+| `files.write/mkdir/delete/rename/copy/move` | 路径 | 可管理根文件系统（禁止删除 `/`）；`write` 用 `options.content`；`rename`/`copy`/`move` 用 `options.to` |
 | `crontab.add` | - | `options.schedule` + `options.command` |
 | `crontab.remove` | 任务 id | 删除对应 crontab 行 |
 | `panel.self_update` | `stable` 或 `prerelease` | 下载对应通道的 install.sh 并升级，保留配置 |
