@@ -97,9 +97,7 @@ export type SystemInfo = {
   channel: string
   web_server?: string
   latest_stable?: string
-  latest_prerelease?: string
   stable_url?: string
-  prerelease_url?: string
 }
 
 export type Task = {

@@ -4,7 +4,7 @@ import {
   Activity, Box, Globe2, ServerCog, ListChecks, Settings2, LogOut, RefreshCw,
   Play, Square, RotateCw, Trash2, Terminal, LockKeyhole, Languages, BellRing,
   Cpu, HardDrive, Database, Plus, FileKey2, FolderOpen, FileText, ChevronUp,
-  Pencil, Download,
+  Pencil, Download, Search, PackageOpen,
 } from 'lucide-react'
 import {api, post, setCSRF} from './api'
 import {I18n, Lang, translator, useI18n} from './i18n'
@@ -206,6 +206,22 @@ function Spark({data, empty}: {data: number[]; empty: string}) {
   )
 }
 
+type DockerTemplate = {
+  name: string
+  description: string
+  image: string
+  hostPort: string
+  containerPort: string
+  env?: string
+}
+
+const dockerTemplates: DockerTemplate[] = [
+  {name: 'Uptime Kuma', description: '轻量服务监控与状态页', image: 'louislam/uptime-kuma:1', hostPort: '3001', containerPort: '3001'},
+  {name: 'File Browser', description: '浏览器文件管理器', image: 'filebrowser/filebrowser:latest', hostPort: '8081', containerPort: '80'},
+  {name: 'Nginx', description: '高性能 Web 服务与反向代理', image: 'nginx:alpine', hostPort: '8080', containerPort: '80'},
+  {name: 'Redis', description: '内存数据库与缓存服务', image: 'redis:7-alpine', hostPort: '6379', containerPort: '6379'},
+]
+
 /* —— Docker —— */
 function DockerPage() {
   const {t} = useI18n()
@@ -256,11 +272,11 @@ function DockerPage() {
   )
 }
 
-function DeployWizard({onClose, onDone}: {onClose: () => void; onDone: () => void}) {
+function DeployWizard({onClose, onDone, preset}: {onClose: () => void; onDone: () => void; preset?: DockerTemplate}) {
   const {t} = useI18n()
-  const [image, setImage] = useState('nginx:alpine'), [name, setName] = useState('')
-  const [hostPort, setHostPort] = useState('8080'), [containerPort, setContainerPort] = useState('80')
-  const [env, setEnv] = useState(''), [domain, setDomain] = useState(''), [enableSSL, setEnableSSL] = useState(false)
+  const [image, setImage] = useState(preset?.image || 'nginx:alpine'), [name, setName] = useState('')
+  const [hostPort, setHostPort] = useState(preset?.hostPort || '8080'), [containerPort, setContainerPort] = useState(preset?.containerPort || '80')
+  const [env, setEnv] = useState(preset?.env || ''), [domain, setDomain] = useState(''), [enableSSL, setEnableSSL] = useState(false)
   const [error, setError] = useState(''), [busy, setBusy] = useState(false)
   async function submit() {
     setBusy(true); setError('')
@@ -671,11 +687,13 @@ function FilesPage() {
   )
 }
 
-/* —— Services —— */
+/* —— App store —— */
 function Services() {
   const {t} = useI18n()
   const [items, setItems] = useState<Service[]>([]), [error, setError] = useState(''), [message, setMessage] = useState('')
   const [installDlg, setInstallDlg] = useState<Service | null>(null)
+  const [dockerDlg, setDockerDlg] = useState<DockerTemplate | null>(null)
+  const [query, setQuery] = useState(''), [category, setCategory] = useState<'all' | 'system' | 'docker'>('all')
   const load = () => api<Service[]>('/services').then(v => { setItems(Array.isArray(v) ? v : []); setError('') }).catch(e => setError(e.message))
   useEffect(() => { void load() }, [])
   async function act(s: Service, verb: string) {
@@ -690,28 +708,35 @@ function Services() {
       setMessage(t('updateQueued'))
     } catch (e) { setError((e as Error).message) }
   }
-  function groupLabel(g?: string) {
-    if (g === 'web') return t('groupWeb')
-    if (g === 'ssl') return t('groupSSL')
-    if (g === 'runtime') return t('groupRuntime')
-    if (g === 'container') return t('groupContainer')
-    return g || ''
-  }
-  const groups = ['web', 'ssl', 'runtime', 'container']
+  const q = query.trim().toLowerCase()
+  const systemApps = items.filter(s => !q || `${s.name} ${s.display_name || ''}`.toLowerCase().includes(q))
+  const dockerApps = dockerTemplates.filter(s => !q || `${s.name} ${s.description} ${s.image}`.toLowerCase().includes(q))
   return (
     <>
-      <PageHead title={t('services')} action={<button className="btn" onClick={load}><RefreshCw />{t('refresh')}</button>} />
+      <PageHead title={t('services')} hint={t('appStoreHint')} action={<button className="btn" onClick={load}><RefreshCw />{t('refresh')}</button>} />
       <div className="page-body">
         {error && <div className="error banner">{error}</div>}
         {message && <div className="success" style={{marginBottom: 12}}>{message}</div>}
-        {groups.map(g => {
-          const list = items.filter(s => (s.group || '') === g)
-          if (!list.length) return null
-          return (
-            <div key={g} style={{marginBottom: 18}}>
-              <h3 style={{margin: '0 0 10px', fontSize: 14, color: 'var(--muted)'}}>{groupLabel(g)}</h3>
-              <div className="service-cards">
-                {list.map(s => (
+        <div className="market-tools">
+          <div className="market-search"><Search /><input value={query} onChange={e => setQuery(e.target.value)} placeholder={t('searchApps')} /></div>
+          <div className="market-categories">
+            {(['all', 'system', 'docker'] as const).map(c => <button key={c} className={category === c ? 'active' : ''} onClick={() => setCategory(c)}>{t(c === 'all' ? 'allApps' : c === 'system' ? 'systemApps' : 'dockerApps')}</button>)}
+          </div>
+        </div>
+        {(category === 'all' || category === 'docker') && dockerApps.length > 0 && <section className="market-section">
+          <h2>{t('dockerApps')}<small>{t('oneClickDocker')}</small></h2>
+          <div className="app-grid">
+            {dockerApps.map((app, index) => <article className="app-card" key={app.image}>
+              <span className={`app-logo tone-${index % 4}`}><PackageOpen /></span>
+              <div className="app-copy"><h3>{app.name}</h3><p>{app.description}</p><code>{app.image}</code></div>
+              <button className="primary" onClick={() => setDockerDlg(app)}>{t('install')}</button>
+            </article>)}
+          </div>
+        </section>}
+        {(category === 'all' || category === 'system') && <section className="market-section">
+          <h2>{t('systemApps')}<small>{t('systemAppsHint')}</small></h2>
+          <div className="app-grid">
+            {systemApps.map(s => (
                   <div className="panel service-card" key={s.name}>
                     <div className="resource">
                       <span className="cube"><ServerCog /></span>
@@ -737,11 +762,10 @@ function Services() {
                       )}
                     </div>
                   </div>
-                ))}
-              </div>
-            </div>
-          )
-        })}
+            ))}
+          </div>
+        </section>}
+        {!systemApps.length && !dockerApps.length && <div className="empty">{t('noData')}</div>}
         {installDlg && (
           <InstallDialog
             service={installDlg}
@@ -749,6 +773,7 @@ function Services() {
             onDone={() => { setInstallDlg(null); setMessage(t('installQueued')); setTimeout(load, 1500) }}
           />
         )}
+        {dockerDlg && <DeployWizard preset={dockerDlg} onClose={() => setDockerDlg(null)} onDone={() => { setDockerDlg(null); setMessage(t('deployTask')) }} />}
       </div>
     </>
   )
@@ -764,6 +789,7 @@ function InstallDialog({service, onClose, onDone}: {service: Service; onClose: (
     if (m === 'source') return t('methodSource')
     if (m === 'package') return t('methodPackage')
     if (m === 'script') return t('methodScript')
+    if (m === 'snap') return t('methodSnap')
     return m
   }
   async function submit() {
@@ -1072,21 +1098,19 @@ function SecurityBlock({me, setMe}: {me: Me; setMe: (m: Me) => void}) {
 function UpdateBlock() {
   const {t} = useI18n()
   const [info, setInfo] = useState<SystemInfo | null>(null)
-  const [channel, setChannel] = useState<'stable' | 'prerelease'>('stable')
   const [message, setMessage] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false)
 
   const load = () => api<SystemInfo>('/system').then(v => {
     setInfo(v)
-    if (v.channel === 'prerelease' || v.channel === 'stable') setChannel(v.channel)
   }).catch(e => setError(e.message))
 
   useEffect(() => { void load() }, [])
 
   async function doUpdate() {
-    if (!confirm(channel === 'prerelease' ? 'Update to prerelease?' : 'Update to stable?')) return
+    if (!confirm(t('confirmStableUpdate'))) return
     setBusy(true); setError(''); setMessage('')
     try {
-      await post('/actions', {kind: 'panel.self_update', resource: channel, options: {channel}})
+      await post('/actions', {kind: 'panel.self_update', resource: 'stable', options: {channel: 'stable'}})
       setMessage(t('updateTask'))
     } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
@@ -1102,15 +1126,9 @@ function UpdateBlock() {
           <div><strong>{t('currentVersion')}:</strong> {info.version}</div>
           <div><strong>{t('webServerUsed')}:</strong> {info.web_server || '-'}</div>
           <div><strong>{t('latestStable')}:</strong> {info.latest_stable || '-'}</div>
-          <div><strong>{t('latestPre')}:</strong> {info.latest_prerelease || '-'}</div>
+          <div><strong>{t('channel')}:</strong> {t('channelStable')}</div>
         </div>
       )}
-      <label>{t('channel')}
-        <select value={channel} onChange={e => setChannel(e.target.value as 'stable' | 'prerelease')}>
-          <option value="stable">{t('channelStable')}</option>
-          <option value="prerelease">{t('channelPre')}</option>
-        </select>
-      </label>
       <div className="card-actions" style={{marginTop: 14}}>
         <button className="btn" onClick={load}><RefreshCw size={14} />{t('checkUpdate')}</button>
         <button className="primary" disabled={busy} onClick={doUpdate}>{busy ? '…' : t('doUpdate')}</button>

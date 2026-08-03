@@ -18,6 +18,7 @@ func DetectServices() []domain.DetectedService {
 	apachePath, apacheOK := lookAny("apache2", "httpd")
 	dockerPath, dockerOK := lookAny("docker")
 	certbotPath, certbotOK := lookAny("certbot")
+	_, snapOK := lookAny("snap")
 	acmePath, acmeOK := findAcme()
 	phpPath, phpOK := lookAny("php")
 	composeOK, composeVer, composePath := detectCompose()
@@ -30,6 +31,10 @@ func DetectServices() []domain.DetectedService {
 	installed["acme.sh"] = acmeOK
 	installed["php"] = phpOK
 
+	certbotMethods, certbotDefault := []string{"source", "package"}, "source"
+	if snapOK && (!certbotOK || strings.HasPrefix(certbotPath, "/snap/")) {
+		certbotMethods, certbotDefault = append([]string{"snap"}, certbotMethods...), "snap"
+	}
 	out := []domain.DetectedService{
 		soft("nginx", "Nginx", "web", []string{"apache"}, []string{"source", "package"}, "source", nil, nginxOK, nginxPath, "/etc/nginx/nginx.conf", serviceUnitStatus("nginx"), installed),
 		soft("apache", "Apache", "web", []string{"nginx"}, []string{"source", "package"}, "source", nil, apacheOK, apachePath, apacheConfig(), serviceUnitStatusApache(), installed),
@@ -42,7 +47,7 @@ func DetectServices() []domain.DetectedService {
 			Note: "Compose V2 已包含在 Docker Engine 中（docker compose），无需单独安装。",
 			BlockReason: map[bool]string{true: "", false: "请先安装 Docker Engine；Compose 插件会随 docker-ce 一起提供。"}[composeOK],
 		},
-		soft("certbot", "Certbot", "ssl", []string{"acme.sh"}, []string{"source", "package"}, "source", nil, certbotOK, certbotPath, "/etc/letsencrypt", map[bool]string{true: "available", false: "not-installed"}[certbotOK], installed),
+		soft("certbot", "Certbot", "ssl", []string{"acme.sh"}, certbotMethods, certbotDefault, nil, certbotOK, certbotPath, "/etc/letsencrypt", map[bool]string{true: "available", false: "not-installed"}[certbotOK], installed),
 		soft("acme.sh", "acme.sh", "ssl", []string{"certbot"}, []string{"script"}, "script", nil, acmeOK, acmePath, "/root/.acme.sh", map[bool]string{true: "available", false: "not-installed"}[acmeOK], installed),
 		soft("php", "PHP", "runtime", nil, []string{"source", "package"}, "source", []string{"8.1", "8.2", "8.3", "8.4"}, phpOK, phpPath, phpIniPath(phpPath), phpStatus(), installed),
 	}
@@ -82,7 +87,7 @@ func lookAny(bins ...string) (string, bool) {
 	}
 	// also check common prefix installs
 	for _, b := range bins {
-		for _, p := range []string{"/usr/local/nginx/sbin/" + b, "/usr/local/sbin/" + b, "/usr/local/bin/" + b} {
+		for _, p := range []string{"/usr/local/nginx/sbin/" + b, "/usr/local/sbin/" + b, "/usr/local/bin/" + b, "/snap/bin/" + b} {
 			if st, err := os.Stat(p); err == nil && !st.IsDir() {
 				return p, true
 			}

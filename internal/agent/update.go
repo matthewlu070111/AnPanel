@@ -23,8 +23,11 @@ const githubRepo = "matthewlu070111/anpanel"
 
 func selfUpdate(ctx context.Context, channel string) (ActionResult, error) {
 	channel = strings.ToLower(strings.TrimSpace(channel))
-	if channel != "stable" && channel != "prerelease" {
-		return ActionResult{}, errors.New("channel must be stable or prerelease")
+	if channel == "" {
+		channel = "stable"
+	}
+	if channel != "stable" {
+		return ActionResult{}, errors.New("only stable updates are supported")
 	}
 	cfg, err := config.Load()
 	if err != nil {
@@ -35,12 +38,7 @@ func selfUpdate(ctx context.Context, channel string) (ActionResult, error) {
 		return ActionResult{}, err
 	}
 
-	var installURL string
-	if channel == "prerelease" {
-		installURL = "https://github.com/" + githubRepo + "/releases/download/prerelease-latest/install.sh"
-	} else {
-		installURL = "https://github.com/" + githubRepo + "/releases/latest/download/install.sh"
-	}
+	installURL := "https://github.com/" + githubRepo + "/releases/latest/download/install.sh"
 
 	tmpDir, err := os.MkdirTemp("", "anpanel-update-*")
 	if err != nil {
@@ -92,41 +90,27 @@ type updateInfo struct {
 	Channel        string `json:"channel"`
 	WebServer      string `json:"web_server"`
 	LatestStable   string `json:"latest_stable,omitempty"`
-	LatestPre      string `json:"latest_prerelease,omitempty"`
 	StableURL      string `json:"stable_url"`
-	PrereleaseURL  string `json:"prerelease_url"`
 }
 
 func systemInfo(ctx context.Context) updateInfo {
-	cfg, _ := config.Load()
-	ch := cfg.UpdateChannel
-	if ch == "" {
-		ch = "stable"
-	}
 	ws, _ := preferredWebServer()
 	info := updateInfo{
 		Version:       Version,
-		Channel:       ch,
+		Channel:       "stable",
 		WebServer:     ws,
 		StableURL:     "https://github.com/" + githubRepo + "/releases/latest",
-		PrereleaseURL: "https://github.com/" + githubRepo + "/releases/tag/prerelease-latest",
 	}
 	// Best-effort latest tags from GitHub API (optional, non-fatal).
 	client := &http.Client{Timeout: 8 * time.Second}
-	if tag, err := githubLatestTag(ctx, client, false); err == nil {
+	if tag, err := githubLatestTag(ctx, client); err == nil {
 		info.LatestStable = tag
-	}
-	if tag, err := githubLatestTag(ctx, client, true); err == nil {
-		info.LatestPre = tag
 	}
 	return info
 }
 
-func githubLatestTag(ctx context.Context, client *http.Client, prerelease bool) (string, error) {
+func githubLatestTag(ctx context.Context, client *http.Client) (string, error) {
 	url := "https://api.github.com/repos/" + githubRepo + "/releases/latest"
-	if prerelease {
-		url = "https://api.github.com/repos/" + githubRepo + "/releases?per_page=5"
-	}
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return "", err
@@ -141,29 +125,11 @@ func githubLatestTag(ctx context.Context, client *http.Client, prerelease bool) 
 	if resp.StatusCode != 200 {
 		return "", fmt.Errorf("github api %s", resp.Status)
 	}
-	if !prerelease {
-		var v struct {
-			TagName string `json:"tag_name"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
-			return "", err
-		}
-		return v.TagName, nil
+	var v struct {
+		TagName string `json:"tag_name"`
 	}
-	var list []struct {
-		TagName    string `json:"tag_name"`
-		Prerelease bool   `json:"prerelease"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
 		return "", err
 	}
-	for _, r := range list {
-		if r.Prerelease || strings.HasPrefix(r.TagName, "build-") || strings.HasPrefix(r.TagName, "prerelease") {
-			return r.TagName, nil
-		}
-	}
-	if len(list) > 0 {
-		return list[0].TagName, nil
-	}
-	return "", errors.New("no release")
+	return v.TagName, nil
 }

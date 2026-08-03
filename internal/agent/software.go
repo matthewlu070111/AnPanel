@@ -56,6 +56,11 @@ func installSoftware(ctx context.Context, component string, opts map[string]stri
 		return installFromPackage(ctx, component, version)
 	case "source":
 		return installFromSource(ctx, component, version)
+	case "snap":
+		if component != "certbot" {
+			return ActionResult{}, errors.New("snap method is only valid for certbot")
+		}
+		return installCertbotSnap(ctx)
 	case "script":
 		if component != "acme.sh" {
 			return ActionResult{}, errors.New("script method is only valid for acme.sh")
@@ -78,7 +83,13 @@ func updateSoftware(ctx context.Context, component string, opts map[string]strin
 	version := strings.TrimSpace(opts["version"])
 	// Prefer re-running source for compiled stacks; package for package installs.
 	if method == "" {
-		if component == "docker" || component == "acme.sh" {
+		if component == "certbot" {
+			if p, _ := system.LookPath("certbot"); strings.HasPrefix(p, "/snap/") {
+				method = "snap"
+			} else {
+				method = "source"
+			}
+		} else if component == "docker" || component == "acme.sh" {
 			method = map[string]string{"docker": "package", "acme.sh": "script"}[component]
 		} else {
 			method = "source"
@@ -91,6 +102,8 @@ func updateSoftware(ctx context.Context, component string, opts map[string]strin
 		return installFromSource(ctx, component, version) // recompile / reinstall latest
 	case "script":
 		return installAcmeSh(ctx)
+	case "snap":
+		return run(ctx, "snap", "refresh", "certbot")
 	default:
 		return ActionResult{}, fmt.Errorf("unknown update method %q", method)
 	}
@@ -472,6 +485,17 @@ ln -sfn /usr/local/certbot/bin/certbot /usr/local/bin/certbot
 certbot --version
 `
 	return runShell(ctx, script)
+}
+
+func installCertbotSnap(ctx context.Context) (ActionResult, error) {
+	if _, err := exec.LookPath("snap"); err != nil {
+		return ActionResult{}, errors.New("snap is not installed")
+	}
+	res, err := run(ctx, "snap", "install", "--classic", "certbot")
+	if err != nil {
+		return ActionResult{}, err
+	}
+	return ActionResult{Output: "installed via snap\n" + res.Output}, nil
 }
 
 func installAcmeSh(ctx context.Context) (ActionResult, error) {

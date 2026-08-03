@@ -6,14 +6,19 @@ import (
 	"encoding/pem"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/matthewlu070111/anpanel/internal/domain"
+	"github.com/matthewlu070111/anpanel/internal/system"
 )
+
+func certbotPath() string {
+	p, _ := system.LookPath("certbot")
+	return p
+}
 
 func discoverCertificates() ([]domain.Certificate, error) {
 	byDomain := map[string]domain.Certificate{}
@@ -142,7 +147,8 @@ func renewCertificate(ctx context.Context, domain, tool string, force bool) (Act
 	}
 	switch tool {
 	case "certbot":
-		if _, err := exec.LookPath("certbot"); err != nil {
+		certbot := certbotPath()
+		if certbot == "" {
 			return ActionResult{}, errors.New("certbot is not installed")
 		}
 		args := []string{"renew", "--non-interactive"}
@@ -152,7 +158,7 @@ func renewCertificate(ctx context.Context, domain, tool string, force bool) (Act
 		if force {
 			args = append(args, "--force-renewal")
 		}
-		res, err := run(ctx, "certbot", args...)
+		res, err := run(ctx, certbot, args...)
 		if err != nil {
 			return ActionResult{}, err
 		}
@@ -221,7 +227,7 @@ func detectCertTool(domain string) string {
 			}
 		}
 	}
-	if _, err := exec.LookPath("certbot"); err == nil {
+	if certbotPath() != "" {
 		return "certbot"
 	}
 	if acmePath() != "" {
@@ -246,7 +252,8 @@ func issueSiteCertificate(ctx context.Context, domain, server, tool, email strin
 	}
 	switch tool {
 	case "certbot":
-		if _, err := exec.LookPath("certbot"); err != nil {
+		certbot := certbotPath()
+		if certbot == "" {
 			return ActionResult{}, errors.New("certbot is not installed")
 		}
 		plugin := "--nginx"
@@ -259,7 +266,7 @@ func issueSiteCertificate(ctx context.Context, domain, server, tool, email strin
 		} else {
 			args = append(args, "--register-unsafely-without-email")
 		}
-		return run(ctx, "certbot", args...)
+		return run(ctx, certbot, args...)
 	case "acme.sh":
 		acme := acmePath()
 		if acme == "" {
