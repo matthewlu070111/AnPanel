@@ -60,9 +60,11 @@
 .terminal-dots .dot-close::before {
   content: '×';
   position: absolute;
-  inset: -3px 0 0;
+  inset: 0;
+  display: grid;
+  place-items: center;
   color: #5b1714;
-  font: 700 12px/12px Arial, sans-serif;
+  font: 700 11px/1 Arial, sans-serif;
   opacity: 0;
 }
 .terminal-dots .dot-close:hover::before { opacity: 1; }

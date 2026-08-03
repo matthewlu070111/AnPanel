@@ -21,8 +21,9 @@ import './alerts.css'
 
 type Page = 'dashboard' | 'docker' | 'ssh' | 'websites' | 'files' | 'services' | 'tasks' | 'alerts' | 'settings'
 
-const pagePaths: Record<Page, string> = {dashboard: '/', docker: '/docker', ssh: '/ssh', websites: '/website', files: '/files', services: '/apps', tasks: '/tasks', alerts: '/alerts', settings: '/settings'}
+const pagePaths: Record<Page, string> = {dashboard: '/', docker: '/docker', ssh: '/ssh', websites: '/website', files: '/files', services: '/apps', tasks: '/tasks', alerts: '/alerts', settings: '/settings/general'}
 function pageFromPath(path: string): Page {
+  if (path === '/settings' || path.startsWith('/settings/')) return 'settings'
   return (Object.entries(pagePaths).find(([, value]) => value === path)?.[0] as Page) || 'dashboard'
 }
 
@@ -119,7 +120,7 @@ function Shell({me, setMe}: {me: Me; setMe: (m: Me | null) => void}) {
         {!me.must_change && me.must_set_entry && <ForceEntrySetup me={me} setMe={setMe} />}
         {page === 'dashboard' && <Dashboard goSettings={() => navigate('settings')} />}
         {page === 'docker' && <DockerPage />}
-        {page === 'ssh' && <HostSSH />}
+        {page === 'ssh' && <HostSSH onClose={() => navigate('dashboard')} />}
         {page === 'websites' && <Websites />}
         {page === 'files' && <FilesPage />}
         {page === 'services' && <Services />}
@@ -394,7 +395,7 @@ function ContainerTerminal({container, onClose}: {container: Container; onClose:
   )
 }
 
-function HostSSH() {
+function HostSSH({onClose}: {onClose: () => void}) {
   const {t} = useI18n()
   const [connected, setConnected] = useState(false)
   const host = useRef<HTMLDivElement>(null)
@@ -416,7 +417,7 @@ function HostSSH() {
     <PageHead title={t('ssh')} hint={t('sshHint')} />
     <div className="page-body ssh-page">
       <div className="terminal-modal host-terminal">
-        <div className="terminal-head"><span className="terminal-dots"><i className="dot-close" /><i className="dot-min" /><i className="dot-max" /></span><strong>root@localhost</strong><em className={connected ? 'online' : ''}>{connected ? t('connected') : t('connecting')}</em></div>
+        <div className="terminal-head"><span className="terminal-dots"><button type="button" className="dot-close" aria-label={t('close')} onClick={onClose} /><i className="dot-min" /><i className="dot-max" /></span><strong>root@localhost</strong><em className={connected ? 'online' : ''}>{connected ? t('connected') : t('connecting')}</em></div>
         <div ref={host} className="terminal-screen" />
         <small className="terminal-hint">{t('sshSecurityHint')}</small>
       </div>
@@ -1354,17 +1355,29 @@ function Alerts() {
 /* —— Settings —— */
 function Settings({me, setMe}: {me: Me; setMe: (m: Me) => void}) {
   const {t} = useI18n()
-  const [tab, setTab] = useState<'general' | 'security'>(me.must_set_entry ? 'security' : 'general')
+  const tabFromPath = () => location.pathname === '/settings/security' ? 'security' : 'general'
+  const [tab, setTab] = useState<'general' | 'security'>(me.must_set_entry ? 'security' : tabFromPath())
+  useEffect(() => {
+    if (me.must_set_entry) history.replaceState({}, '', '/settings/security')
+    else if (location.pathname === '/settings') history.replaceState({}, '', '/settings/general')
+    const pop = () => setTab(tabFromPath())
+    addEventListener('popstate', pop)
+    return () => removeEventListener('popstate', pop)
+  }, [me.must_set_entry])
+  function selectTab(next: 'general' | 'security') {
+    history.pushState({}, '', `/settings/${next}`)
+    setTab(next)
+  }
   return (
     <>
       <PageHead title={t('settings')} />
       <div className="page-body">
         <div className="tabs">
-          <button className={tab === 'general' ? 'active' : ''} onClick={() => setTab('general')}>{t('settingsTabGeneral')}</button>
-          <button className={tab === 'security' ? 'active' : ''} onClick={() => setTab('security')}>{t('settingsTabSecurity')}</button>
+          <button className={tab === 'general' ? 'active' : ''} onClick={() => selectTab('general')}>{t('settingsTabGeneral')}</button>
+          <button className={tab === 'security' ? 'active' : ''} onClick={() => selectTab('security')}>{t('settingsTabSecurity')}</button>
         </div>
-        {tab === 'general' && <div className="settings-stack"><LocalIPBlock /><UpdateBlock /></div>}
-        {tab === 'security' && <div className="settings-stack"><PanelDomainWizard /><EntrySecurityBlock me={me} setMe={setMe} /><SecurityBlock me={me} setMe={setMe} /></div>}
+        <div className="settings-stack" hidden={tab !== 'general'}><LocalIPBlock /><UpdateBlock /></div>
+        <div className="settings-stack" hidden={tab !== 'security'}><PanelDomainWizard /><EntrySecurityBlock me={me} setMe={setMe} /><SecurityBlock me={me} setMe={setMe} /></div>
       </div>
     </>
   )
@@ -1372,14 +1385,15 @@ function Settings({me, setMe}: {me: Me; setMe: (m: Me) => void}) {
 
 function LocalIPBlock() {
   const {t} = useI18n()
-  const [ip, setIP] = useState(''), [detected, setDetected] = useState('')
+  const initial = cached<{local_ip: string; detected_ip: string}>('settingsLocalIP', {local_ip: '', detected_ip: ''})
+  const [ip, setIP] = useState(initial.local_ip), [detected, setDetected] = useState(initial.detected_ip)
   const [message, setMessage] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false)
-  useEffect(() => { api<{local_ip: string; detected_ip: string}>('/settings/local-ip').then(v => { setIP(v.local_ip); setDetected(v.detected_ip) }).catch(e => setError(e.message)) }, [])
+  useEffect(() => { api<{local_ip: string; detected_ip: string}>('/settings/local-ip').then(v => { cache('settingsLocalIP', v); setIP(v.local_ip); setDetected(v.detected_ip) }).catch(e => setError(e.message)) }, [])
   async function save() {
     const warnings = [t('ipWarning1'), t('ipWarning2'), t('ipWarning3')]
     for (const warning of warnings) if (!window.confirm(warning)) return
     setBusy(true); setError(''); setMessage('')
-    try { const v = await post<{local_ip: string}>('/settings/local-ip', {local_ip: ip}); setIP(v.local_ip); setMessage(t('ipSaved')) }
+    try { const v = await post<{local_ip: string; detected_ip: string}>('/settings/local-ip', {local_ip: ip}); cache('settingsLocalIP', v); setIP(v.local_ip); setMessage(t('ipSaved')) }
     catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
   return <div className="panel settings-card">
@@ -1392,10 +1406,12 @@ function LocalIPBlock() {
 
 function EntrySecurityBlock({me, setMe}: {me: Me; setMe: (m: Me) => void}) {
   const {t} = useI18n()
-  const [path, setPath] = useState(me.entry_path || '')
-  const [decoy, setDecoy] = useState<'404' | 'dino'>((me.decoy_mode === 'dino' ? 'dino' : '404'))
+  const saved = cached<{path: string; decoy: '404' | 'dino'}>('settingsEntry', {path: me.entry_path || '', decoy: me.decoy_mode === 'dino' ? 'dino' : '404'})
+  const [path, setPath] = useState(saved.path)
+  const [decoy, setDecoy] = useState<'404' | 'dino'>(saved.decoy)
   const [message, setMessage] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false)
   const pathError = entryPathHint(path, t)
+  useEffect(() => cache('settingsEntry', {path, decoy}), [path, decoy])
   async function save() {
     if (pathError) { setError(pathError); return }
     setBusy(true); setError(''); setMessage('')
@@ -1438,9 +1454,11 @@ function EntrySecurityBlock({me, setMe}: {me: Me; setMe: (m: Me) => void}) {
 
 function PanelDomainWizard() {
   const {t} = useI18n()
-  const [step, setStep] = useState(0)
-  const [domain, setDomain] = useState(''), [tool, setTool] = useState('certbot'), [email, setEmail] = useState('')
+  const saved = cached('settingsPanelDomain', {step: 0, domain: '', tool: 'certbot', email: ''})
+  const [step, setStep] = useState(saved.step)
+  const [domain, setDomain] = useState(saved.domain), [tool, setTool] = useState(saved.tool), [email, setEmail] = useState(saved.email)
   const [message, setMessage] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false)
+  useEffect(() => cache('settingsPanelDomain', {step, domain, tool, email}), [step, domain, tool, email])
 
   async function bind() {
     setBusy(true); setError(''); setMessage('')
@@ -1530,12 +1548,14 @@ function SecurityBlock({me, setMe}: {me: Me; setMe: (m: Me) => void}) {
 
 function UpdateBlock() {
   const {t} = useI18n()
-  const [info, setInfo] = useState<SystemInfo | null>(null)
-  const [channel, setChannel] = useState<'stable' | 'prerelease'>('stable')
+  const saved = cached<SystemInfo | null>('settingsUpdateInfo', null)
+  const [info, setInfo] = useState<SystemInfo | null>(saved)
+  const [channel, setChannel] = useState<'stable' | 'prerelease'>(() => cached('settingsUpdateChannel', saved?.channel === 'prerelease' ? 'prerelease' : 'stable'))
   const [error, setError] = useState(''), [busy, setBusy] = useState(false)
   const [updating, setUpdating] = useState(false)
 
   const load = () => api<SystemInfo>('/system').then(v => {
+    cache('settingsUpdateInfo', v)
     setInfo(v)
     setChannel(v.channel === 'prerelease' ? 'prerelease' : 'stable')
   }).catch(e => setError(e.message))
@@ -1565,9 +1585,7 @@ function UpdateBlock() {
       {info && (
         <div style={{display: 'grid', gap: 10, marginBottom: 16, fontSize: 13}}>
           <div><strong>{t('currentVersion')}:</strong> {info.version}</div>
-          <div><strong>{t('webServerUsed')}:</strong> {info.web_server || '-'}</div>
-          <div><strong>{t('latestStable')}:</strong> {info.latest_stable || '-'}</div>
-          <div><strong>{t('latestPre')}:</strong> {info.latest_prerelease || '-'}</div>
+          <div><strong>{t(channel === 'prerelease' ? 'latestPre' : 'latestStable')}:</strong> {remote || '-'}</div>
           <div><strong>{t('channel')}:</strong> {t(channel === 'prerelease' ? 'channelPre' : 'channelStable')}</div>
           <div>
             <strong>{t('updateCheck')}:</strong>{' '}
@@ -1576,7 +1594,7 @@ function UpdateBlock() {
         </div>
       )}
       <label className="update-channel">{t('channel')}
-        <select value={channel} onChange={e => setChannel(e.target.value as 'stable' | 'prerelease')}>
+        <select value={channel} onChange={e => { const next = e.target.value as 'stable' | 'prerelease'; setChannel(next); cache('settingsUpdateChannel', next) }}>
           <option value="stable">{t('channelStable')}</option>
           <option value="prerelease">{t('channelPre')}</option>
         </select>
